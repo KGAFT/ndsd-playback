@@ -17,9 +17,6 @@ crate-type = ["rlib"]
 [dependencies]
 byteorder = "1.5"
 
-[target.'cfg(target_os = "windows")'.dependencies]
-asio-sys = {path = "rust-modules/asio-sys"}
-
 [target.'cfg(target_os = "linux")'.dependencies]
 alsa-sys = "0.2"
 crossbeam = "0.8"
