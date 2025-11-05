@@ -1,0 +1,25 @@
+[package]
+name = "ndsd-playback"
+version = "0.1.0"
+edition = "2024"
+description = "A lightweight library in rust for native dsd playback over compatible devices."
+license = "Apache-2.0"
+repository = "https://github.com/yourusername/my_crate_name"
+readme = "README.md"
+categories = ["multimedia::audio"]
+keywords = ["dsd", "alsa", "native", "no-pcm-conversion", "asio"]
+
+[lib]
+name = "ndsdpb"
+path = "src/lib.rs"
+crate-type = ["rlib"]
+
+[dependencies]
+byteorder = "1.5"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+asio-sys = {path = "rust-modules/asio-sys"}
+
+[target.'cfg(target_os = "linux")'.dependencies]
+alsa-sys = "0.2"
+crossbeam = "0.8"
