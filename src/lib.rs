@@ -12,7 +12,7 @@ mod tests{
         player_names.iter().for_each(|name|{
             eprintln!("Found device: {}, {}",name.0.to_str().unwrap(), name.1.to_str().unwrap());
         });
-        let mut player = players::create_player_and_open(player_names[1].0.clone(), "/mnt/hdd/Music/Pink Floyd - The Wall 1979 [SACD-R]/04. The Happiest Days of Our Lives.dff");
+        let mut player = players::create_player_and_open(player_names[0].0.clone(), "/mnt/hdd/Music/Pink Floyd - The Wall 1979 [SACD-R]/04. The Happiest Days of Our Lives.dff");
 
         //player.load_new_track();
         println!("{:?}", player.get_format_info());
