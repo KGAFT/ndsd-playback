@@ -1,6 +1,6 @@
 [package]
 name = "ndsd-playback"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 description = "A lightweight library in rust for native dsd playback over compatible devices."
 license = "Apache-2.0"
