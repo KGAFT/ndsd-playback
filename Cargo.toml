@@ -9,10 +9,6 @@ readme = "README.md"
 categories = ["multimedia::audio"]
 keywords = ["dsd", "alsa", "native", "no-pcm-conversion", "asio"]
 
-[lib]
-name = "ndsdpb"
-path = "src/lib.rs"
-crate-type = ["rlib"]
 
 [dependencies]
 byteorder = "1.5"
