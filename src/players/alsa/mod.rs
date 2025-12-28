@@ -347,6 +347,7 @@ impl DSDPlayer for DsdPlayer{
 
     fn play(&self) {
         self.paused.store(false, Relaxed);
+        self.is_playing.store(true, Relaxed);
     }
 
     fn get_pos(&self) -> f64 {
@@ -368,7 +369,7 @@ impl DSDPlayer for DsdPlayer{
     }
 
     fn is_playing(&self) -> bool {
-        self.is_playing.load(Relaxed)
+        self.is_playing.load(Relaxed) == !self.paused.load(Relaxed)
     }
 
     fn load_new_track(&mut self, filename: &str) {
@@ -416,13 +417,23 @@ impl DSDPlayer for DsdPlayer{
             return;
         }
         let mut alsa_buffer = vec![0u8; self.buffers.alsa_buffer_size()];
+        let mut last_paused = false;
         loop {
             if self.stoped.load(Relaxed) {
                 break;
             }
             if self.paused.load(Relaxed) {
+                if !last_paused {
+                    unsafe { alsa::snd_pcm_pause(self.playback_handle, 1); }
+                    last_paused = true;
+                }
+
                 sleep(Duration::from_millis(100));
                 continue;
+            }
+            if last_paused {
+                unsafe { alsa::snd_pcm_pause(self.playback_handle, 0); }
+                last_paused = false;
             }
             self.is_playing.store(true, Relaxed);
             let alsa_buffer_size = self.buffers.alsa_buffer_size();

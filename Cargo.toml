@@ -1,13 +1,13 @@
 [package]
 name = "ndsd-playback"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 description = "A lightweight library in rust for native dsd playback over compatible devices."
 license = "Apache-2.0"
 repository = "https://github.com/KGAFT/ndsd-playback"
 readme = "README.md"
 categories = ["multimedia::audio"]
-keywords = ["dsd", "alsa", "native", "no-pcm-conversion", "asio"]
+keywords = ["dsd", "alsa", "native", "no-pcm-conversion"]
 
 
 [dependencies]
