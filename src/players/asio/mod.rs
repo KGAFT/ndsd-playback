@@ -9,17 +9,21 @@ use crate::dsd_readers::{self, DSDFormat, DSDReader};
 use crate::players::DSDPlayer;
 use crate::semaphore::Semaphore;
 
-use ndsd_asio_sys::bindings::errors::AsioErrorWrapper;
 use ndsd_asio_sys::bindings::asio_import as ai;
+use ndsd_asio_sys::bindings::errors::AsioErrorWrapper;
 
-use std::ffi::{c_char, c_double, c_long, c_void, CStr, CString};
+use ndsd_asio_sys::AsioMessageSelectors::{
+    kAsioEngineVersion, kAsioLatenciesChanged, kAsioResetRequest, kAsioResyncRequest,
+    kAsioSelectorSupported, kAsioSupportsInputMonitor, kAsioSupportsTimeCode,
+    kAsioSupportsTimeInfo,
+};
+use ndsd_asio_sys::AsioSampleType::{ASIOSTDSDInt8LSB1, ASIOSTDSDInt8MSB1, ASIOSTDSDInt8NER8};
+use std::ffi::{CStr, CString, c_char, c_double, c_long, c_void};
 use std::io;
 use std::ptr::null_mut;
 use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
 use std::thread::sleep;
 use std::time::Duration;
-use ndsd_asio_sys::AsioMessageSelectors::{kAsioEngineVersion, kAsioLatenciesChanged, kAsioResetRequest, kAsioResyncRequest, kAsioSelectorSupported, kAsioSupportsInputMonitor, kAsioSupportsTimeCode, kAsioSupportsTimeInfo};
-use ndsd_asio_sys::AsioSampleType::{ASIOSTDSDInt8LSB1, ASIOSTDSDInt8MSB1, ASIOSTDSDInt8NER8};
 // ---------------------------------------------------------------------------
 // Win32 import (avoid new deps, keep it minimal).
 // ---------------------------------------------------------------------------
@@ -36,9 +40,9 @@ enum DsdFormat {
 
 #[derive(Clone, Copy, Debug)]
 struct DsdBufferContext {
-    buffer_size: usize,         // ASIO buffer size in samples (DSD bits)
+    __buffer_size: usize,       // ASIO buffer size in samples (DSD bits)
     channel_buffer_size: usize, // bytes per channel (buffer_size / 8)
-    buffer_bytes: usize,        // same as channel_buffer_size
+    __buffer_bytes: usize,      // same as channel_buffer_size
     sample_format: DsdFormat,
     channels: usize,
     post_output: bool,
@@ -100,8 +104,7 @@ extern "C" fn on_buffer_switch(double_buffer_index: c_long, _direct_process: c_l
     }
 }
 
-extern "C" fn on_sample_rate_changed(_s_rate: c_double) {
-}
+extern "C" fn on_sample_rate_changed(_s_rate: c_double) {}
 
 unsafe extern "C" fn on_asio_message(
     selector: c_long,
@@ -110,21 +113,19 @@ unsafe extern "C" fn on_asio_message(
     _opt: *mut f64,
 ) -> c_long {
     match selector {
-        x if x == kAsioSelectorSupported as c_long => {
-            match value {
-                v if v == kAsioResetRequest as c_long
-                    || v == kAsioResyncRequest as c_long
-                    || v == kAsioLatenciesChanged as c_long
-                    || v == kAsioEngineVersion as c_long
-                    || v == kAsioSupportsTimeInfo as c_long
-                    || v == kAsioSupportsTimeCode as c_long
-                    || v == kAsioSupportsInputMonitor as c_long =>
-                {
-                    1
-                }
-                _ => 0,
+        x if x == kAsioSelectorSupported as c_long => match value {
+            v if v == kAsioResetRequest as c_long
+                || v == kAsioResyncRequest as c_long
+                || v == kAsioLatenciesChanged as c_long
+                || v == kAsioEngineVersion as c_long
+                || v == kAsioSupportsTimeInfo as c_long
+                || v == kAsioSupportsTimeCode as c_long
+                || v == kAsioSupportsInputMonitor as c_long =>
+            {
+                1
             }
-        }
+            _ => 0,
+        },
         x if x == kAsioEngineVersion as c_long => 2,
         x if x == kAsioResetRequest as c_long => 1,
         x if x == kAsioResyncRequest as c_long => 1,
@@ -142,7 +143,6 @@ extern "C" fn on_buffer_switch_time_info(
     on_buffer_switch(double_buffer_index, direct_process);
     time
 }
-
 
 struct AsioDsdSetup {
     driver_info: ai::ASIODriverInfo,
@@ -182,42 +182,46 @@ impl AsioDsdSetup {
     }
 
     unsafe fn initialize_driver(&mut self, driver_name: &CStr) -> Result<(), String> {
-        // IMPORTANT: The driver DLL MUST be loaded *before* calling ASIOInit().
-        if ai::load_asio_driver(driver_name.as_ptr() as *mut i8) == false {
-            return Err("Failed to load ASIO driver".into());
+        unsafe {
+            // IMPORTANT: The driver DLL MUST be loaded *before* calling ASIOInit().
+            if ai::load_asio_driver(driver_name.as_ptr() as *mut i8) == false {
+                return Err("Failed to load ASIO driver".into());
+            }
+
+            self.driver_info.asioVersion = 2;
+            self.driver_info.sysRef = GetDesktopWindow();
+
+            // copy driver name
+            let bytes = driver_name.to_bytes();
+            let name_len = bytes
+                .len()
+                .min(self.driver_info.name.len().saturating_sub(1));
+            for i in 0..name_len {
+                self.driver_info.name[i] = bytes[i] as c_char;
+            }
+            self.driver_info.name[name_len] = 0;
+
+            let init_res = ai::ASIOInit(&mut self.driver_info as *mut _);
+            if init_res == AsioErrorWrapper::ASE_NotPresent as i32 {
+                return Err("ASIO driver not present (did you load it?)".into());
+            }
+            if init_res != AsioErrorWrapper::ASE_OK as i32 {
+                return Err(format!("Failed to initialize ASIO driver: {init_res}"));
+            }
+
+            // Check DSD support.
+            let mut io_format = ai::ASIOIoFormat {
+                FormatType: ai::ASIOIoFormatType_e_kASIODSDFormat,
+                future: [0; 508],
+            };
+            let can_do = ai::ASIOFuture(
+                ai::kAsioCanDoIoFormat as i32,
+                (&mut io_format as *mut _) as *mut c_void,
+            );
+            self.dsd_supported = can_do == AsioErrorWrapper::ASE_SUCCESS as i32;
+
+            Ok(())
         }
-
-        self.driver_info.asioVersion = 2;
-        self.driver_info.sysRef = GetDesktopWindow();
-
-        // copy driver name
-        let bytes = driver_name.to_bytes();
-        let name_len = bytes.len().min(self.driver_info.name.len().saturating_sub(1));
-        for i in 0..name_len {
-            self.driver_info.name[i] = bytes[i] as c_char;
-        }
-        self.driver_info.name[name_len] = 0;
-
-        let init_res = ai::ASIOInit(&mut self.driver_info as *mut _);
-        if init_res == AsioErrorWrapper::ASE_NotPresent as i32 {
-            return Err("ASIO driver not present (did you load it?)".into());
-        }
-        if init_res != AsioErrorWrapper::ASE_OK as i32 {
-            return Err(format!("Failed to initialize ASIO driver: {init_res}"));
-        }
-
-        // Check DSD support.
-        let mut io_format = ai::ASIOIoFormat {
-            FormatType: ai::ASIOIoFormatType_e_kASIODSDFormat,
-            future: [0; 508],
-        };
-        let can_do = ai::ASIOFuture(
-            ai::kAsioCanDoIoFormat as i32,
-            (&mut io_format as *mut _) as *mut c_void,
-        );
-        self.dsd_supported = can_do == AsioErrorWrapper::ASE_SUCCESS as i32;
-
-        Ok(())
     }
 
     unsafe fn get_device_buffer_size(&self) -> Result<(c_long, c_long), String> {
@@ -225,7 +229,14 @@ impl AsioDsdSetup {
         let mut max_size: c_long = 0;
         let mut prefer_size: c_long = 0;
         let mut granularity: c_long = 0;
-        let err = ai::ASIOGetBufferSize(&mut min_size, &mut max_size, &mut prefer_size, &mut granularity);
+        let err = unsafe {
+            ai::ASIOGetBufferSize(
+                &mut min_size,
+                &mut max_size,
+                &mut prefer_size,
+                &mut granularity,
+            )
+        };
         if !asio_ok(err) {
             return Err("Failed to get ASIO buffer size".into());
         }
@@ -278,7 +289,7 @@ impl AsioDsdSetup {
 
     unsafe fn set_output_sample_rate(&self, sample_rate: c_double) -> Result<(), String> {
         // Set device sample rate.
-        let err = ai::ASIOSetSampleRate(sample_rate);
+        let err = unsafe { ai::ASIOSetSampleRate(sample_rate) };
         if err == AsioErrorWrapper::ASE_NotPresent as i32 {
             return Err("Sample rate not supported".into());
         }
@@ -287,9 +298,10 @@ impl AsioDsdSetup {
         }
 
         const CLOCK_SOURCE_SIZE: usize = 32;
-        let mut clock_sources: [ai::ASIOClockSource; CLOCK_SOURCE_SIZE] = std::mem::zeroed();
+        let mut clock_sources: [ai::ASIOClockSource; CLOCK_SOURCE_SIZE] =
+            unsafe { std::mem::zeroed() };
         let mut num_sources: c_long = CLOCK_SOURCE_SIZE as c_long;
-        let err = ai::ASIOGetClockSources(clock_sources.as_mut_ptr(), &mut num_sources);
+        let err = unsafe { ai::ASIOGetClockSources(clock_sources.as_mut_ptr(), &mut num_sources) };
         if !asio_ok(err) {
             return Err("Failed to get clock sources".into());
         }
@@ -305,7 +317,7 @@ impl AsioDsdSetup {
         }
 
         if !current_set && num_sources > 1 {
-            let err = ai::ASIOSetClockSource(clock_sources[0].index);
+            let err = unsafe { ai::ASIOSetClockSource(clock_sources[0].index) };
             if !asio_ok(err) {
                 return Err("Failed to set clock source".into());
             }
@@ -313,7 +325,7 @@ impl AsioDsdSetup {
 
         Ok(())
     }
-
+    #[allow(unused_assignments)]
     unsafe fn setup_native_dsd(
         &mut self,
         num_channels: usize,
@@ -327,19 +339,21 @@ impl AsioDsdSetup {
             FormatType: ai::ASIOIoFormatType_e_kASIODSDFormat,
             future: [0; 508],
         };
-        let err = ai::ASIOFuture(
-            ai::kAsioSetIoFormat as i32,
-            (&mut io_format as *mut _) as *mut c_void,
-        );
+        let err = unsafe {
+            ai::ASIOFuture(
+                ai::kAsioSetIoFormat as i32,
+                (&mut io_format as *mut _) as *mut c_void,
+            )
+        };
         if err != AsioErrorWrapper::ASE_SUCCESS as i32 {
             return Err("Failed to set ASIO IO format to DSD".into());
         }
 
         // Sample rate + clock source setup.
-        self.set_output_sample_rate(sample_rate)?;
+        unsafe { self.set_output_sample_rate(sample_rate)? };
 
         // Buffer size calculation with granularity handling.
-        let (prefer_size, buffer_size) = self.get_device_buffer_size()?;
+        let (prefer_size, buffer_size) = unsafe { self.get_device_buffer_size()? };
 
         for i in 0..32 {
             self.buffer_infos[i].isInput = 0;
@@ -347,65 +361,69 @@ impl AsioDsdSetup {
             self.buffer_infos[i].buffers[0] = null_mut();
             self.buffer_infos[i].buffers[1] = null_mut();
         }
-        //Reading unaligned fields
-        let field_ptr = std::ptr::addr_of!(self.callbacks.bufferSwitch);
-        let bwswitch = unsafe { field_ptr.read_unaligned() };
-        let field_ptr = std::ptr::addr_of!(self.callbacks.asioMessage);
-        let asiomsg = field_ptr.read_unaligned();
-        // Safety check: valid callbacks (ASIO requirement).
-        if bwswitch.is_none() || asiomsg.is_none() {
-            return Err("ASIO callbacks not properly initialized".into());
-        }
+        unsafe {
+            //Reading unaligned fields
+            let field_ptr = std::ptr::addr_of!(self.callbacks.bufferSwitch);
+            let bwswitch =  field_ptr.read_unaligned() ;
+            let field_ptr = std::ptr::addr_of!(self.callbacks.asioMessage);
+            let asiomsg = field_ptr.read_unaligned();
 
+            // Safety check: valid callbacks (ASIO requirement).
+            if bwswitch.is_none() || asiomsg.is_none() {
+                return Err("ASIO callbacks not properly initialized".into());
+            }
+        }
         // Create buffers with fallback to prefer_size.
         let mut actual_buffer_size: c_long = 0;
-        let res = ai::ASIOCreateBuffers(
-            self.buffer_infos.as_mut_ptr(),
-            num_channels as i32,
-            buffer_size,
-            &mut self.callbacks as *mut _,
-        );
-        if !asio_ok(res) {
-            let res2 = ai::ASIOCreateBuffers(
+        unsafe {
+            let res = ai::ASIOCreateBuffers(
                 self.buffer_infos.as_mut_ptr(),
                 num_channels as i32,
-                prefer_size,
+                buffer_size,
                 &mut self.callbacks as *mut _,
             );
-            if !asio_ok(res2) {
-                return Err("Failed to create ASIO buffers".into());
+            if !asio_ok(res) {
+                let res2 = ai::ASIOCreateBuffers(
+                    self.buffer_infos.as_mut_ptr(),
+                    num_channels as i32,
+                    prefer_size,
+                    &mut self.callbacks as *mut _,
+                );
+                if !asio_ok(res2) {
+                    return Err("Failed to create ASIO buffers".into());
+                }
+                actual_buffer_size = prefer_size;
+            } else {
+                actual_buffer_size = buffer_size;
             }
-            actual_buffer_size = prefer_size;
-        } else {
-            actual_buffer_size = buffer_size;
         }
 
         // Channel infos for all channels (exact loop).
         for i in 0..num_channels {
             self.channel_infos[i].channel = self.buffer_infos[i].channelNum;
             self.channel_infos[i].isInput = self.buffer_infos[i].isInput;
-            let err = ai::ASIOGetChannelInfo(&mut self.channel_infos[i]);
+            let err = unsafe { ai::ASIOGetChannelInfo(&mut self.channel_infos[i]) };
             if !asio_ok(err) {
                 return Err("Failed to get channel info".into());
             }
         }
 
-        let mut ch0: ai::ASIOChannelInfo = std::mem::zeroed();
+        let mut ch0: ai::ASIOChannelInfo = unsafe { std::mem::zeroed() };
         ch0.isInput = 0;
         ch0.channel = 0;
-        let err = ai::ASIOGetChannelInfo(&mut ch0);
+        let err = unsafe { ai::ASIOGetChannelInfo(&mut ch0) };
         if !asio_ok(err) {
             return Err("Failed to get channel info".into());
         }
-        let detected_format =
-            detect_dsd_format(ch0.type_).ok_or_else(|| "Unsupported DSD format reported by driver".to_string())?;
+        let detected_format = detect_dsd_format(ch0.type_)
+            .ok_or_else(|| "Unsupported DSD format reported by driver".to_string())?;
 
         // DSD buffer context calculation.
         let channel_buffer_size = (actual_buffer_size as usize) / 8;
         let mut ctx = DsdBufferContext {
-            buffer_size: actual_buffer_size as usize,
+            __buffer_size: actual_buffer_size as usize,
             channel_buffer_size,
-            buffer_bytes: channel_buffer_size,
+            __buffer_bytes: channel_buffer_size,
             sample_format: detected_format,
             channels: num_channels,
             post_output: false,
@@ -414,25 +432,26 @@ impl AsioDsdSetup {
         // Latencies (exactly after buffer setup).
         let mut in_lat: c_long = 0;
         let mut out_lat: c_long = 0;
-        let err = ai::ASIOGetLatencies(&mut in_lat, &mut out_lat);
+        let err = unsafe { ai::ASIOGetLatencies(&mut in_lat, &mut out_lat) };
         if !asio_ok(err) {
             return Err("Failed to get latencies".into());
         }
 
         // OutputReady support check.
-        ctx.post_output = asio_ok(ai::ASIOOutputReady());
+        ctx.post_output = unsafe { asio_ok(ai::ASIOOutputReady()) };
 
         Ok(ctx)
     }
 
     unsafe fn cleanup(&mut self) {
-        let _ = ai::ASIOStop();
-        let _ = ai::ASIODisposeBuffers();
-        let _ = ai::ASIOExit();
-        ai::remove_current_driver();
+        unsafe {
+            let _ = ai::ASIOStop();
+            let _ = ai::ASIODisposeBuffers();
+            let _ = ai::ASIOExit();
+            ai::remove_current_driver()
+        };
     }
 }
-
 
 pub struct AsioDsdPlayer {
     driver_name: CString,
@@ -467,9 +486,9 @@ impl AsioDsdPlayer {
             reader_semaphore: Semaphore::new(1),
             format: DSDFormat::default(),
             dsd_context: DsdBufferContext {
-                buffer_size: 0,
+                __buffer_size: 0,
                 channel_buffer_size: 0,
-                buffer_bytes: 0,
+                __buffer_bytes: 0,
                 sample_format: DsdFormat::Int8Msb1,
                 channels: 0,
                 post_output: false,
@@ -494,16 +513,16 @@ impl AsioDsdPlayer {
         }
 
         let mut setup = AsioDsdSetup::new();
-        setup.initialize_driver(CStr::from_ptr(self.driver_name.as_ptr()))?;
+        unsafe { setup.initialize_driver(CStr::from_ptr(self.driver_name.as_ptr()))? };
         if !setup.dsd_supported {
-            setup.cleanup();
+            unsafe { setup.cleanup() };
             return Err("Driver does not support native DSD".into());
         }
 
         // Setup native DSD based on file format.
         let channels = self.format.num_channels as usize;
         let sample_rate = self.format.sampling_rate as c_double;
-        let ctx = setup.setup_native_dsd(channels, sample_rate)?;
+        let ctx = unsafe { setup.setup_native_dsd(channels, sample_rate)? };
         self.dsd_context = ctx;
 
         // Decide whether we need to bit-reverse file data to match driver format.
@@ -520,54 +539,60 @@ impl AsioDsdPlayer {
     }
 
     unsafe fn start(&mut self) -> Result<(), String> {
-        if self.reader.is_none() {
-            return Err("No file loaded".into());
-        }
-        if self.setup.is_none() {
-            self.ensure_driver_initialized()?;
-        }
+        unsafe {
+            if self.reader.is_none() {
+                return Err("No file loaded".into());
+            }
+            if self.setup.is_none() {
+                self.ensure_driver_initialized()?;
+            }
 
-        CURRENT_PLAYER = self as *mut _;
-        let res = ai::ASIOStart();
-        if !asio_ok(res) {
-            return Err("Failed to start ASIO".into());
-        }
+            CURRENT_PLAYER = self as *mut _;
+            let res = ai::ASIOStart();
+            if !asio_ok(res) {
+                return Err("Failed to start ASIO".into());
+            }
 
-        self.stopped.store(false, Relaxed);
-        self.paused.store(false, Relaxed);
-        self.is_playing.store(true, Relaxed);
-        Ok(())
+            self.stopped.store(false, Relaxed);
+            self.paused.store(false, Relaxed);
+            self.is_playing.store(true, Relaxed);
+            Ok(())
+        }
     }
 
     unsafe fn stop_internal(&mut self) {
         if !self.stopped.swap(true, Relaxed) {
-            let _ = ai::ASIOStop();
+            unsafe {
+                let _ = ai::ASIOStop();
+            }
         }
         self.is_playing.store(false, Relaxed);
     }
 
     unsafe fn cleanup_internal(&mut self) {
-        self.stop_internal();
-        if let Some(mut setup) = self.setup.take() {
-            setup.cleanup();
+        unsafe {
+            self.stop_internal();
+            if let Some(mut setup) = self.setup.take() {
+                setup.cleanup();
+            }
+            CURRENT_PLAYER = null_mut();
+            INITIALIZED.store(false, Relaxed);
         }
-        CURRENT_PLAYER = null_mut();
-        INITIALIZED.store(false, Relaxed);
     }
 
     unsafe fn fill_buffer(&mut self, buffer_index: i32) {
         if self.stopped.load(Relaxed) || self.paused.load(Relaxed) {
             // While paused: output DSD silence.
-            self.fill_silence(buffer_index);
+            unsafe { self.fill_silence(buffer_index) };
             return;
         }
 
         let Some(setup) = self.setup.as_mut() else {
-            self.fill_silence(buffer_index);
+            unsafe { self.fill_silence(buffer_index) };
             return;
         };
         let Some(reader) = self.reader.as_mut() else {
-            self.fill_silence(buffer_index);
+            unsafe { self.fill_silence(buffer_index) };
             return;
         };
 
@@ -577,13 +602,15 @@ impl AsioDsdPlayer {
         // Build slices directly over the ASIO planar buffers.
         let mut out_slices: Vec<&mut [u8]> = Vec::with_capacity(channels);
         for ch in 0..channels {
-            let ptr = setup.buffer_infos[ch].buffers[buffer_index as usize] as *mut u8;
-            if ptr.is_null() {
-                self.fill_silence(buffer_index);
-                return;
+            unsafe {
+                let ptr = setup.buffer_infos[ch].buffers[buffer_index as usize] as *mut u8;
+                if ptr.is_null() {
+                    self.fill_silence(buffer_index);
+                    return;
+                }
+                let slice = std::slice::from_raw_parts_mut(ptr, bytes_per_channel);
+                out_slices.push(slice);
             }
-            let slice = std::slice::from_raw_parts_mut(ptr, bytes_per_channel);
-            out_slices.push(slice);
         }
 
         self.reader_semaphore.acquire();
@@ -596,8 +623,10 @@ impl AsioDsdPlayer {
         };
 
         if bytes == 0 {
-            self.fill_silence(buffer_index);
-            self.stop_internal();
+            unsafe {
+                self.fill_silence(buffer_index);
+                self.stop_internal();
+            }
             return;
         }
 
@@ -612,15 +641,19 @@ impl AsioDsdPlayer {
     }
 
     unsafe fn fill_silence(&mut self, buffer_index: i32) {
-        let Some(setup) = self.setup.as_mut() else { return };
+        let Some(setup) = self.setup.as_mut() else {
+            return;
+        };
         let bytes_per_channel = self.dsd_context.channel_buffer_size;
         for ch in 0..self.dsd_context.channels {
-            let ptr = setup.buffer_infos[ch].buffers[buffer_index as usize] as *mut u8;
-            if ptr.is_null() {
-                continue;
+            unsafe {
+                let ptr = setup.buffer_infos[ch].buffers[buffer_index as usize] as *mut u8;
+                if ptr.is_null() {
+                    continue;
+                }
+                let slice = std::slice::from_raw_parts_mut(ptr, bytes_per_channel);
+                slice.fill(0x69); // DSD silence.
             }
-            let slice = std::slice::from_raw_parts_mut(ptr, bytes_per_channel);
-            slice.fill(0x69); // DSD silence.
         }
     }
 }
@@ -720,4 +753,3 @@ impl Drop for AsioDsdPlayer {
         }
     }
 }
-
