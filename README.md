@@ -9,10 +9,9 @@ This library will support only dsd without pcm conversion, you will need dac wit
 Feature | status
 --- | --- 
 dsf/dsdiff reading | supported
-dsd playback | supported**
+dsd playback | supported
 metadata parsing | TODO
 
-** - Only alsa playback, working on asio version to be compatible with windows
 # What will not be supported:
 
 SACD iso images playback, due to obvious reasons.

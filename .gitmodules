@@ -1,0 +1,3 @@
+[submodule "ndsd-asio-sys"]
+	path = ndsd-asio-sys
+	url = https://github.com/KGAFT/ndsd-asio-sys

@@ -41,7 +41,7 @@ struct Buffers {
     work1: Vec<u8>,
     alsa_buffer_size: usize,
 }
-
+#[cfg(target_os = "linux")]
 impl Buffers {
     pub fn new(alsa_buffer_size: usize) -> Self {
         Self {
@@ -104,7 +104,7 @@ impl Buffers {
         self.alsa_buffer_size
     }
 }
-
+#[cfg(target_os = "linux")]
 pub struct DsdPlayer {
     playback_handle: *mut alsa::snd_pcm_t,
     hw_params: *mut alsa::snd_pcm_hw_params_t,
@@ -117,7 +117,7 @@ pub struct DsdPlayer {
     stoped: AtomicBool,
     is_playing: AtomicBool,
 }
-
+#[cfg(target_os = "linux")]
 impl DsdPlayer {
     pub fn support_dsd(device_name: *const c_char) -> bool {
         let mut handle: *mut alsa::snd_pcm_t = std::ptr::null_mut();
@@ -330,7 +330,7 @@ impl DsdPlayer {
         }
     }
 }
-
+#[cfg(target_os = "linux")]
 impl DSDPlayer for DsdPlayer{
     fn get_current_position_percents(&self) -> f64 {
         if let Some(reader) = self.reader.as_ref() {
@@ -492,7 +492,7 @@ impl DSDPlayer for DsdPlayer{
         self.format.clone()
     }
 }
-
+#[cfg(target_os = "linux")]
 impl Drop for DsdPlayer {
     fn drop(&mut self) {
         unsafe {
