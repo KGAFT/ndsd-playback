@@ -215,6 +215,8 @@ checksum = "68354c5c6bd36d73ff3feceb05efa59b6acb7626617f4962be322a825e61f79a"
 [[package]]
 name = "ndsd-asio-sys"
 version = "0.2.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e02abef88b816fab930f5fbc3ae1346e83fbe3c50276d8581ad354937c6b805e"
 dependencies = [
  "bindgen",
  "cc",
@@ -226,7 +228,7 @@ dependencies = [
 
 [[package]]
 name = "ndsd-playback"
-version = "0.1.3"
+version = "0.2.0"
 dependencies = [
  "alsa-sys",
  "byteorder",

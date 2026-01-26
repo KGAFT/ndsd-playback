@@ -1,6 +1,6 @@
 [package]
 name = "ndsd-playback"
-version = "0.1.3"
+version = "0.2.0"
 edition = "2024"
 description = "A lightweight library in rust for native dsd playback over compatible devices."
 license = "Apache-2.0"
@@ -15,7 +15,7 @@ keywords = ["dsd", "alsa", "native", "no-pcm-conversion", "asio"]
 byteorder = "1.5"
 
 [target.'cfg(target_os = "windows")'.dependencies]
-ndsd-asio-sys={path = "ndsd-asio-sys"}
+ndsd-asio-sys="0.2"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 alsa-sys = "0.2"
