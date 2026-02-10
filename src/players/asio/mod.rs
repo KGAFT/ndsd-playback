@@ -104,7 +104,7 @@ extern "C" fn on_buffer_switch(double_buffer_index: c_long, _direct_process: c_l
     }
 }
 
-extern "C" fn on_sample_rate_changed(_s_rate: c_double) {}
+unsafe extern "C" fn on_sample_rate_changed(_s_rate: c_double) {}
 
 unsafe extern "C" fn on_asio_message(
     selector: c_long,
@@ -510,6 +510,7 @@ impl AsioDsdPlayer {
         if INITIALIZED.swap(true, Relaxed) {
             // Only one ASIO driver instance at a time in this crate.
             // We keep this strict to avoid undefined ASIO global state.
+            return Ok(());
         }
 
         let mut setup = AsioDsdSetup::new();
@@ -697,22 +698,42 @@ impl DSDPlayer for AsioDsdPlayer {
     }
 
     fn load_new_track(&mut self, filename: &str) {
-        unsafe {
-            self.cleanup_internal();
-        }
-
         let mut format = DSDFormat::default();
         let reader = dsd_readers::open_dsd_auto(filename, &mut format).expect("Failed to open DSD");
-        self.reader = Some(reader);
-        self.format = format;
-        self.stopped.store(false, Relaxed);
 
-        unsafe {
-            // Initialize driver for the new file format.
-            self.ensure_driver_initialized().ok();
+        let need_full_reset = self.format.is_different(&format);
+
+        if need_full_reset {
+            unsafe {
+                self.cleanup_internal(); // Full driver teardown
+            }
+            self.reader = Some(reader);
+            self.format = format.clone();
+            self.stopped.store(false, Relaxed);
+            unsafe {
+                self.ensure_driver_initialized().expect("Failed to initialize ASIO");
+            }
+        } else {
+            self.reader_semaphore.acquire();
+            self.reader = Some(reader);
+            self.format = format.clone();
+            self.stopped.store(false, Relaxed);
+
+            unsafe {
+                let _ = ai::ASIOStop();
+                let _ = ai::ASIOStart();
+            }
+            self.reader_semaphore.release();
         }
-    }
 
+        // Update bit reversal logic
+        let file_is_lsb = format.is_lsb_first;
+        self.need_bit_reverse = match self.dsd_context.sample_format {
+            DsdFormat::Int8Lsb1 => !file_is_lsb,
+            DsdFormat::Int8Msb1 => file_is_lsb,
+            DsdFormat::Int8Ner8 => file_is_lsb,
+        };
+    }
     fn seek(&mut self, percent: f64) -> Result<(), io::Error> {
         self.reader_semaphore.acquire();
         let res = if let Some(reader) = self.reader.as_mut() {

@@ -16,7 +16,7 @@ pub struct DSDFormat {
 }
 
 impl DSDFormat {
-    pub fn is_alsa_update_need(&self, other: &Self) -> bool {
+    pub fn is_different(&self, other: &Self) -> bool {
         return self.sampling_rate != other.sampling_rate
             || self.num_channels != other.num_channels;
     }
