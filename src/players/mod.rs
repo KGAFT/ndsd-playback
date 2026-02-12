@@ -36,7 +36,7 @@ pub fn create_player_and_open(device_id: CString, path: &str) -> Box<dyn DSDPlay
     Box::new(asio::AsioDsdPlayer::open(device_id, path))
 }
 
-pub trait DSDPlayer{
+pub trait DSDPlayer: Send + Sync{
     fn get_current_position_percents(&self) -> f64;
     fn pause(&self);
     fn play(&self);

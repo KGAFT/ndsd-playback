@@ -117,6 +117,10 @@ pub struct DsdPlayer {
     stoped: AtomicBool,
     is_playing: AtomicBool,
 }
+
+unsafe impl Send for DsdPlayer {}
+unsafe impl Sync for DsdPlayer {}
+
 #[cfg(target_os = "linux")]
 impl DsdPlayer {
     pub fn support_dsd(device_name: *const c_char) -> bool {
