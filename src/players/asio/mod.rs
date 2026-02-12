@@ -24,6 +24,7 @@ use std::ptr::null_mut;
 use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
 use std::thread::sleep;
 use std::time::Duration;
+use crate::players::alsa::DsdPlayer;
 // ---------------------------------------------------------------------------
 // Win32 import (avoid new deps, keep it minimal).
 // ---------------------------------------------------------------------------
@@ -465,6 +466,10 @@ pub struct AsioDsdPlayer {
     is_playing: AtomicBool,
     need_bit_reverse: bool,
 }
+
+unsafe impl Send for AsioDsdPlayer {}
+unsafe impl Sync for AsioDsdPlayer {}
+
 
 impl AsioDsdPlayer {
     pub fn enumerate_supported_devices() -> Vec<(CString, CString)> {
