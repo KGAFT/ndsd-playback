@@ -201,7 +201,7 @@ impl DsdPlayer {
         }
     }
 
-    pub fn new(device_name: &str) -> Self {
+    pub fn new(device_name: &str) -> Option<Self> {
         unsafe {
             let buffers = Buffers::new(1);
             let err: i32;
@@ -216,7 +216,8 @@ impl DsdPlayer {
                 0,
             );
             if err < 0 {
-                panic!("cannot open audio device: {}", err);
+                eprintln!("cannot open audio device: {}", err);
+                return None;
             }
             let mut res = Self {
                 playback_handle,
@@ -231,14 +232,14 @@ impl DsdPlayer {
                 reader_semaphore: Semaphore::new(1),
             };
             res.setup_params();
-            res
+            Some(res)
         }
     }
 
-    pub fn open(filename: &str, device_name: &str) -> Self {
-        let mut res = Self::new(device_name);
+    pub fn open(filename: &str, device_name: &str) -> Option<Self> {
+        let mut res = Self::new(device_name)?;
         res.load_new_track(filename);
-        res
+        Some(res)
     }
 
 
