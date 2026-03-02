@@ -49,7 +49,7 @@ pub fn open_dsd_auto(path: &str, format: &mut DSDFormat) -> io::Result<Box<dyn D
     }
 }
 
-pub trait DSDReader {
+pub trait DSDReader: Send + Sync {
     fn open(&mut self, format: &mut DSDFormat) -> io::Result<()>;
     fn read(&mut self, data: &mut [&mut [u8]], bytes_per_channel: usize) -> io::Result<usize>;
     fn seek_percent(&mut self, percent: f64) -> io::Result<()>;

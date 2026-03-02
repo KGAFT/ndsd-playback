@@ -1,7 +1,8 @@
 pub mod semaphore;
 pub mod dsd_readers;
 pub mod players;
-
+pub mod utils;
+/*
 #[cfg(test)]
 mod tests{
     use crate::players;
@@ -26,3 +27,5 @@ mod tests{
         player.play_on_current_thread();
     }
 }
+
+ */

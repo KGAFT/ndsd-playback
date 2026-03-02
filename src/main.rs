@@ -1,22 +1,46 @@
-pub mod semaphore;
+use crate::players::alsa::{AlsaPlayer, ControlRequest};
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
+use std::time::Duration;
+use tokio::spawn;
+use tokio::time::sleep;
+
 pub mod dsd_readers;
 pub mod players;
+pub mod semaphore;
+pub mod utils;
+#[tokio::main]
+async fn main() {
+    let devices = AlsaPlayer::enumerate_supported_devices();
+    //let player = AlsaPlayer::new(devices[1].0.to_str().unwrap());
 
-fn main() {
-    let player_names = players::enumerate_supported_devices();
-    player_names.iter().for_each(|name|{
-        eprintln!("Found device: {}, {}",name.0.to_str().unwrap(), name.1.to_str().unwrap());
+    let mut mpsc = tokio::sync::mpsc::channel(512);
+    let mut playing = Arc::new(AtomicBool::new(false));
+    let task = spawn(async move {
+        AlsaPlayer::player_main(devices[1].0.clone(), playing, mpsc.1).await;
     });
-    let mut player = players::create_player_and_open(player_names[1].0.clone(), "/mnt/hdd/Music/Alice In Chains - Greatest Hits (2001) [SACD] (ISO)/01 - Man In The Box.dsf").unwrap();
+    mpsc.0
+        .send(ControlRequest::LoadTrack(
+            "/mnt/hdd/Music/1983 - Let's Dance (2003 Re-Issue SACD-R)/01 - Modern Love.dff".into(),
+        ))
+        .await
+        .unwrap();
+    mpsc.0.send(ControlRequest::Start).await.unwrap();
+    sleep(Duration::from_millis(3000)).await;
+    mpsc.0.send(ControlRequest::Seek(0.5f64)).await.unwrap();
+    sleep(Duration::from_millis(3000)).await;
+    mpsc.0.send(ControlRequest::Stop).await.unwrap();
 
-    //player.load_new_track();
-    println!("{:?}", player.get_format_info());
-    player.play();
-    player.play_on_current_thread();
-    println!("next track");
-    player.load_new_track("/mnt/hdd/Music/Alice In Chains - Greatest Hits (2001) [SACD] (ISO)/02 - Them Bones.dsf");
-    player.seek(0.8).unwrap();
-    println!("{:?}", player.get_format_info());
-    player.play();
-    player.play_on_current_thread();
+
+    mpsc.0
+        .send(ControlRequest::LoadTrack(
+            "/mnt/hdd/Music/Pixies - Bossanova (1990) [SACD] (2008 MFSL Remaster ISO)/All Over The World.dsf".into(),
+        ))
+        .await
+        .unwrap();
+    sleep(Duration::from_millis(3000)).await;
+
+     mpsc.0.send(ControlRequest::Start).await.unwrap();
+
+    loop{}
 }
