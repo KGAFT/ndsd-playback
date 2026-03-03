@@ -56,4 +56,10 @@ pub trait DSDReader: Send + Sync {
     fn seek_samples(&mut self, sample_index: u64) -> io::Result<()>;
     fn get_position_frames(&self) -> u64;
     fn get_position_percent(&self) -> f64;
+    
+    fn eof(&self) -> bool;
+
+    fn reset(&mut self) -> io::Result<()> {
+        self.seek_samples(0)
+    }
 }

@@ -15,10 +15,8 @@ async fn main() {
     //let player = AlsaPlayer::new(devices[1].0.to_str().unwrap());
 
     let mut mpsc = tokio::sync::mpsc::channel(512);
-    let mut playing = Arc::new(AtomicBool::new(false));
-    let task = spawn(async move {
-        AlsaPlayer::player_main(devices[1].0.clone(), playing, mpsc.1).await;
-    });
+    AlsaPlayer::player_main(devices[1].0.clone(), mpsc.1).await;
+
     mpsc.0
         .send(ControlRequest::LoadTrack(
             "/mnt/hdd/Music/1983 - Let's Dance (2003 Re-Issue SACD-R)/01 - Modern Love.dff".into(),
@@ -29,8 +27,10 @@ async fn main() {
     sleep(Duration::from_millis(3000)).await;
     mpsc.0.send(ControlRequest::Seek(0.5f64)).await.unwrap();
     sleep(Duration::from_millis(3000)).await;
-    mpsc.0.send(ControlRequest::Stop).await.unwrap();
-
+    mpsc.0.send(ControlRequest::Pause).await.unwrap();
+    sleep(Duration::from_millis(3000)).await;
+    mpsc.0.send(ControlRequest::Play).await.unwrap();
+    sleep(Duration::from_millis(3000)).await;
 
     mpsc.0
         .send(ControlRequest::LoadTrack(

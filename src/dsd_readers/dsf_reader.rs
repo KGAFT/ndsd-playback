@@ -201,4 +201,8 @@ impl DSDReader for DSFReader {
         let frames = self.get_position_frames();
         (frames as f64 / self.total_samples as f64).min(1.0)
     }
+
+    fn eof(&self) -> bool {
+        self.read_samples == self.total_samples
+    }
 }

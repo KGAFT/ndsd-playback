@@ -9,15 +9,31 @@ use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering::Relaxed;
 
 use std::{io, ptr};
+use std::time::Duration;
 use tokio::spawn;
 use tokio::sync::{Mutex, mpsc::Receiver};
 use tokio::task::JoinHandle;
+use tokio::time::sleep;
 
 pub enum ControlRequest {
     LoadTrack(PathBuf),
     Start,
     Stop,
     Seek(f64),
+    Pause,
+    Play,
+}
+
+struct PlayerState {
+    reader: Option<Box<dyn DSDReader>>,
+    format: DSDFormat,
+    setup: Option<AlsaSetup>,
+    playing: bool,
+    paused: bool,
+    first_paused: bool,
+    released_pause: bool,
+    device_name: CString,
+    alsa_buffer: Option<Vec<u8>>,
 }
 
 pub struct AlsaPlayer {
@@ -36,119 +52,124 @@ impl AlsaPlayer {
 
     pub async fn player_main(
         device_name: CString,
-        playing: Arc<AtomicBool>,
         mut channel: Receiver<ControlRequest>,
     ) {
-        if playing.load(Relaxed) {
-            return;
-        }
-        let mut cur_reader: Arc<Mutex<Option<Box<dyn DSDReader>>>> = Arc::new(Mutex::new(None));
-        let mut cur_format: Arc<Mutex<Option<DSDFormat>>> = Arc::new(Mutex::new(None));
-        let mut alsa_task: Option<JoinHandle<()>> = None;
-
-        loop {
-            if let Some(request) = channel.recv().await {
-                match request {
-                    ControlRequest::LoadTrack(path) => {
-                        let mut format = DSDFormat::default();
-                        if let Ok(reader) =
-                            dsd_readers::open_dsd_auto(path.to_str().unwrap(), &mut format)
-                        {
-                            Self::stop_task(playing.clone(), &mut alsa_task).await;
-                            alsa_task = None;
-                            cur_reader.lock().await.replace(reader);
-                            cur_format.lock().await.replace(format);
-                        }
-                    }
-                    ControlRequest::Start => {
-                        playing.store(true, Relaxed);
-
-                        let reader = cur_reader.clone();
-                        let format = cur_format.clone();
-                        let dev_name = device_name.to_string_lossy().to_string();
-                        let playing = playing.clone();
-                        playing.store(true, Relaxed);
-                        let task = spawn(async move {
-                            eprintln!("Spawned");
-                            Self::alsa_main(
-                                playing.clone(),
-                                reader,
-                                format,
-                                CString::new(dev_name.as_str()).unwrap(),
-                            )
-                            .await;
-                        });
-                        alsa_task.replace(task);
-                    }
-                    ControlRequest::Stop => {
-                       Self::stop_task(playing.clone(), &mut alsa_task).await;
-                    }
-                    ControlRequest::Seek(f64) => {
-                        if let Some(mut reader) = cur_reader.lock().await.as_mut() {
-                            let _ = reader.seek_percent(f64);
-                        }
-                    }
+        
+        std::thread::spawn(move || {
+            let mut state: PlayerState = PlayerState {
+                reader: None,
+                format: Default::default(),
+                setup: None,
+                playing: false,
+                paused: false,
+                first_paused: false,
+                released_pause: false,
+                device_name,
+                alsa_buffer: None,
+            };
+            loop {
+                if let Ok(command) = channel.try_recv() {
+                    Self::process_command(command, &mut state);
+                }
+                if !Self::playback_poll(&mut state) {
+                    std::thread::sleep(Duration::from_millis(250));
                 }
             }
-        }
+        });
+        
     }
 
-    async fn stop_task(playing: Arc<AtomicBool>, play_task: &mut Option<JoinHandle<()>>){
-        playing.store(false, Relaxed);
-        if let Some(task) = play_task.take() {
-            task.abort();
-        }
-    }
-
-    async fn alsa_main(
-        playing: Arc<AtomicBool>,
-        reader: Arc<Mutex<Option<Box<dyn DSDReader>>>>,
-        format: Arc<Mutex<Option<DSDFormat>>>,
-        device_name: CString,
-    ) {
-        if let Some(mut setup) = AlsaSetup::new(device_name) {
-            if let Some(format) = format.lock().await.as_ref() {
-                if format.num_channels == 2 {
-                    let alsa_buffer_size = 8192 * (format.sampling_rate / 2822400) as usize;
-                    let buffers = Buffers::new(alsa_buffer_size);
-                    setup.buffers = buffers;
-                    setup.reprepare_alsa_sync();
-                    setup.update_hw_params(format, setup.buffers.alsa_buffer_size);
+    fn process_command(command: ControlRequest, state: &mut PlayerState) {
+        let mut setup_reload_required = false;
+        match command {
+            ControlRequest::LoadTrack(path) => {
+                let mut format = DSDFormat::default();
+                if let Ok(reader) = dsd_readers::open_dsd_auto(path.to_str().unwrap(), &mut format)
+                {
+                    state.reader = Some(reader);
+                    setup_reload_required = format.is_different(&state.format);
+                    state.format = format;
                 }
+            }
+            ControlRequest::Start => {
+                if let Some(mut reader) = state.reader.as_mut() {
+                    if state.setup.is_none() {
+                        setup_reload_required = true;
+                    }
+                    if reader.eof() {
+                        let _ = reader.reset();
+                    }
+                    state.playing = true;
+                }
+            }
+            ControlRequest::Stop => {
+                state.playing = false;
+            }
+            ControlRequest::Seek(f64) => {
+                if let Some(mut reader) = state.reader.as_mut() {
+                    let _ = reader.seek_percent(f64);
+                }
+            }
+            ControlRequest::Pause => {
+                state.paused = true;
+                state.first_paused = true;
+            }
+            ControlRequest::Play => {
+                state.paused = false;
+                state.released_pause = true;
+            }
+        }
+        if setup_reload_required {
+            if state.setup.is_none() {
+                state.setup = Some(AlsaSetup::new(state.device_name.clone()).expect("Alsa failed"));
             } else {
-                playing.store(false, Relaxed);
-                return;
+                state.setup.as_mut().unwrap().reprepare_alsa_sync();
             }
-            Self::start_playback(playing.clone(), reader, setup, format).await;
+            let alsa_buffer_size = 8192 * (state.format.sampling_rate / 2822400) as usize;
+            let buffers = Buffers::new(alsa_buffer_size);
+            state.setup.as_mut().unwrap().buffers = buffers;
+            state
+                .setup
+                .as_mut()
+                .unwrap()
+                .update_hw_params(&state.format, alsa_buffer_size);
+            state.alsa_buffer = Some(vec![0u8; alsa_buffer_size]);
         }
-        playing.store(false, Relaxed);
     }
 
-    async fn start_playback(
-        playing: Arc<AtomicBool>,
-        reader: Arc<Mutex<Option<Box<dyn DSDReader>>>>,
-        mut setup: AlsaSetup,
-        format: Arc<Mutex<Option<DSDFormat>>>,
-    ) {
-        let mut alsa_buffer = vec![0u8; setup.buffers.alsa_buffer_size()];
-        while playing.load(Relaxed) {
-            let mut reader_lock = reader.lock().await;
-            let format_lock = format.lock().await;
-            let reader = reader_lock.as_mut().unwrap();
-            let format = format_lock.as_ref().unwrap();
-            let alsa_buffer_size = setup.buffers.alsa_buffer_size();
+    fn playback_poll(state: &mut PlayerState) -> bool {
+        if state.playing {
+          
+            let alsa_buffer =state.alsa_buffer.as_mut().unwrap();
+            let setup = state.setup.as_mut().unwrap();
+            let reader = state.reader.as_mut().unwrap();
+            let format = &state.format;
+            
+            if state.paused {
+                if state.first_paused {
+                    unsafe { alsa::snd_pcm_pause(setup.playback_handle, 1); }
+                    state.first_paused = false;
+                } 
+                return false;
+            } else if state.released_pause{
+                unsafe { alsa::snd_pcm_pause(setup.playback_handle, 0); }
+                state.released_pause = false;
+            }
+            
+            let alsa_buffer_size = alsa_buffer.len();
             let num_channels = format.num_channels;
+            
+            
             let mut work_slices = setup.buffers.get_slice_for_reader();
-            let bytes =
-                match reader.read(&mut work_slices, alsa_buffer_size / num_channels as usize) {
-                    Ok(b) => b,
-                    Err(_) => {
-                        eprintln!("read error");
-                        break;
-                    }
-                };
+            let bytes = match reader.read(&mut work_slices, alsa_buffer_size / num_channels as usize) {
+                Ok(b) => b,
+                Err(_) => {
+                    eprintln!("read error");
+                    return false;
+                }
+            };
             if bytes == 0 {
-                break;
+                return false;
             }
             let write_frames = setup.buffers.populate_alsa_buffer(
                 alsa_buffer.as_mut_slice(),
@@ -166,16 +187,25 @@ impl AlsaPlayer {
             };
             if written == -77 {
                 eprintln!("cannot write audio frame EBADF");
-                break;
+                state.playing = false;
+                return false;
             }
             if written == -32 {
                 eprintln!("cannot write audio frame EPIPE");
-                break;
+                state.playing = false;
+                return false;
             }
             if written == -86 {
                 eprintln!("cannot write audio frame ESTRPIPE");
-                break;
+                state.playing = false;
+                return false;
             }
+            if reader.eof(){
+                state.playing = false;
+            }
+            return true;
+        } else {
+            return false;
         }
     }
 
@@ -380,6 +410,7 @@ impl AlsaSetup {
     fn reprepare_alsa_sync(&mut self) {
         unsafe {
             let err: i32;
+            alsa::snd_pcm_drain(self.playback_handle);
             alsa::snd_pcm_close(self.playback_handle);
             err = alsa::snd_pcm_open(
                 &mut self.playback_handle,
@@ -463,6 +494,15 @@ impl AlsaSetup {
             if alsa::snd_pcm_prepare(self.playback_handle.clone()) < 0 {
                 panic!("cannot prepare audio interface for use");
             }
+        }
+    }
+}
+
+impl Drop for AlsaSetup {
+    fn drop(&mut self) {
+        unsafe {
+            alsa::snd_pcm_drain(self.playback_handle);
+            alsa::snd_pcm_close(self.playback_handle);
         }
     }
 }

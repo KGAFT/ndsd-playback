@@ -291,4 +291,8 @@ impl DSDReader for DFFReader {
             (self.get_position_frames() as f64 / self.total_frames as f64).min(1.0)
         }
     }
+
+    fn eof(&self) -> bool {
+        self.read_frames == self.total_frames
+    }
 }
