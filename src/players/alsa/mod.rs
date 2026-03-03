@@ -2,6 +2,7 @@
 use crate::dsd_readers;
 use crate::dsd_readers::{DSDFormat, DSDReader};
 use crate::players::DSDPlayer;
+use atomic_float::AtomicF64;
 use crate::utils::bit_reverse_table::BIT_REVERSE_TABLE;
 #[cfg(target_os = "linux")]
 use alsa_sys::{SND_PCM_NONBLOCK, SND_PCM_STREAM_PLAYBACK};
@@ -13,10 +14,14 @@ use std::path::PathBuf;
 use std::time::Duration;
 #[cfg(target_os = "linux")]
 use std::{io, ptr};
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering::Relaxed;
 #[cfg(target_os = "linux")]
 use tokio::sync::mpsc::Sender;
 #[cfg(target_os = "linux")]
 use tokio::sync::{mpsc, mpsc::Receiver};
+use tokio::sync::Mutex;
 
 #[cfg(target_os = "linux")]
 pub enum ControlRequest {
@@ -47,6 +52,9 @@ pub struct AlsaPlayer {
     device_name: CString,
     player_thread: std::thread::JoinHandle<()>,
     message_channel: Sender<ControlRequest>,
+    current_pos: Arc<AtomicF64>,
+    is_playing: Arc<AtomicBool>,
+    cur_format: Arc<Mutex<DSDFormat>>
 }
 #[async_trait::async_trait]
 impl DSDPlayer for AlsaPlayer {
@@ -66,7 +74,7 @@ impl DSDPlayer for AlsaPlayer {
     }
 
     async fn get_pos(&self) -> f64 {
-        todo!()
+        self.current_pos.load(Relaxed)
     }
 
     async fn stop(&self) {
@@ -74,7 +82,7 @@ impl DSDPlayer for AlsaPlayer {
     }
 
     async fn is_playing(&self) -> bool {
-        todo!()
+        self.is_playing.load(Relaxed)
     }
 
     async fn load_new_track(&self, filename: &str) {
@@ -96,7 +104,7 @@ impl DSDPlayer for AlsaPlayer {
     }
 
     async fn get_format_info(&self) -> DSDFormat {
-        todo!()
+        self.cur_format.lock().await.clone()
     }
 }
 
@@ -105,16 +113,27 @@ impl AlsaPlayer {
     pub fn new(device_name: &str) -> Self {
         let device = std::ffi::CString::new(device_name).unwrap();
         let mut mpsc = mpsc::channel::<ControlRequest>(16);
+        let cur_pos = Arc::new(AtomicF64::new(0.));
+        let is_playing = Arc::new(AtomicBool::new(false));
+        let cur_format = Arc::new(Mutex::new(DSDFormat::default()));
         Self {
             device_name: device.clone(),
-            player_thread: Self::player_main(device, mpsc.1),
+            player_thread: Self::player_main(device, mpsc.1, cur_pos.clone(), is_playing.clone(), cur_format.clone()),
             message_channel: mpsc.0,
+            current_pos: cur_pos,
+            is_playing,
+            cur_format,
         }
     }
+
+
 
     fn player_main(
         device_name: CString,
         mut channel: Receiver<ControlRequest>,
+        pos: Arc<AtomicF64>,
+        is_playing: Arc<AtomicBool>,
+        cur_format: Arc<Mutex<DSDFormat>>
     ) -> std::thread::JoinHandle<()> {
         std::thread::spawn(move || {
             let mut state: PlayerState = PlayerState {
@@ -130,25 +149,28 @@ impl AlsaPlayer {
             };
             loop {
                 if !state.playing {
-                    // block until a command arrives
+                    is_playing.store(false, Relaxed);
+                    *cur_format.blocking_lock() = DSDFormat::default();
                     if let Some(cmd) = channel.blocking_recv() {
-                        if !Self::process_command(cmd, &mut state) {
+                        if !Self::process_command(cmd, &mut state, cur_format.clone()) {
                             break;
                         }
                     }
                 } else {
                     if let Ok(cmd) = channel.try_recv() {
-                        if !Self::process_command(cmd, &mut state) {
+                        if !Self::process_command(cmd, &mut state, cur_format.clone()) {
                             break;
                         }
                     }
                     Self::playback_poll(&mut state);
+                    pos.store(state.reader.as_mut().unwrap().get_position_percent(), Relaxed);
+                    is_playing.store(true, Relaxed);
                 }
             }
         })
     }
 
-    fn process_command(command: ControlRequest, state: &mut PlayerState) -> bool {
+    fn process_command(command: ControlRequest, state: &mut PlayerState, cur_format: Arc<Mutex<DSDFormat>>) -> bool {
         let mut setup_reload_required = false;
         match command {
             ControlRequest::LoadTrack(path) => {
@@ -157,7 +179,8 @@ impl AlsaPlayer {
                 {
                     state.reader = Some(reader);
                     setup_reload_required = format.is_different(&state.format);
-                    state.format = format;
+                    state.format = format.clone();
+                    *cur_format.blocking_lock() = format;
                 }
             }
             ControlRequest::Start => {

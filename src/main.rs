@@ -35,5 +35,8 @@ async fn main() {
 
     player.start().await;
 
-    loop {}
+    loop {
+        println!("Pos {}", player.get_pos().await);
+        sleep(Duration::from_millis(1000)).await;
+    }
 }
