@@ -1,20 +1,24 @@
+#![cfg(target_os = "linux")]
 use crate::dsd_readers;
 use crate::dsd_readers::{DSDFormat, DSDReader};
+use crate::players::DSDPlayer;
 use crate::utils::bit_reverse_table::BIT_REVERSE_TABLE;
+#[cfg(target_os = "linux")]
 use alsa_sys::{SND_PCM_NONBLOCK, SND_PCM_STREAM_PLAYBACK};
+#[cfg(target_os = "linux")]
 use std::ffi::{CStr, CString, c_char, c_void};
+use std::io::{Error, ErrorKind};
+#[cfg(target_os = "linux")]
 use std::path::PathBuf;
-use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
-use std::sync::atomic::Ordering::Relaxed;
-
-use std::{io, ptr};
 use std::time::Duration;
-use tokio::spawn;
-use tokio::sync::{Mutex, mpsc::Receiver};
-use tokio::task::JoinHandle;
-use tokio::time::sleep;
+#[cfg(target_os = "linux")]
+use std::{io, ptr};
+#[cfg(target_os = "linux")]
+use tokio::sync::mpsc::Sender;
+#[cfg(target_os = "linux")]
+use tokio::sync::{mpsc, mpsc::Receiver};
 
+#[cfg(target_os = "linux")]
 pub enum ControlRequest {
     LoadTrack(PathBuf),
     Start,
@@ -22,7 +26,9 @@ pub enum ControlRequest {
     Seek(f64),
     Pause,
     Play,
+    Terminate,
 }
+#[cfg(target_os = "linux")]
 
 struct PlayerState {
     reader: Option<Box<dyn DSDReader>>,
@@ -35,26 +41,81 @@ struct PlayerState {
     device_name: CString,
     alsa_buffer: Option<Vec<u8>>,
 }
+#[cfg(target_os = "linux")]
 
 pub struct AlsaPlayer {
     device_name: CString,
-    control_flow: Option<JoinHandle<()>>,
+    player_thread: std::thread::JoinHandle<()>,
+    message_channel: Sender<ControlRequest>,
+}
+#[async_trait::async_trait]
+impl DSDPlayer for AlsaPlayer {
+    async fn start(&self) {
+        self.message_channel
+            .send(ControlRequest::Start)
+            .await
+            .unwrap();
+    }
+
+    async fn pause(&self) {
+        let _ = self.message_channel.send(ControlRequest::Pause).await;
+    }
+
+    async fn play(&self) {
+        let _ = self.message_channel.send(ControlRequest::Play).await;
+    }
+
+    async fn get_pos(&self) -> f64 {
+        todo!()
+    }
+
+    async fn stop(&self) {
+        let _ = self.message_channel.send(ControlRequest::Stop).await;
+    }
+
+    async fn is_playing(&self) -> bool {
+        todo!()
+    }
+
+    async fn load_new_track(&self, filename: &str) {
+        let _ = self
+            .message_channel
+            .send(ControlRequest::LoadTrack(PathBuf::from(filename)))
+            .await;
+    }
+
+    async fn seek(&self, percent: f64) -> Result<(), Error> {
+        let res = self
+            .message_channel
+            .send(ControlRequest::Seek(percent))
+            .await;
+        if let Err(_) = res {
+            return Err(Error::new(ErrorKind::Other, "Alsa player seek error"));
+        }
+        Ok(())
+    }
+
+    async fn get_format_info(&self) -> DSDFormat {
+        todo!()
+    }
 }
 
+#[cfg(target_os = "linux")]
 impl AlsaPlayer {
     pub fn new(device_name: &str) -> Self {
         let device = std::ffi::CString::new(device_name).unwrap();
+        let mut mpsc = mpsc::channel::<ControlRequest>(16);
         Self {
-            device_name: device,
-            control_flow: None,
+            device_name: device.clone(),
+            player_thread: Self::player_main(device, mpsc.1),
+            message_channel: mpsc.0,
         }
     }
 
-    pub async fn player_main(
+    fn player_main(
         device_name: CString,
         mut channel: Receiver<ControlRequest>,
-    ) {
-        
+    ) -> std::thread::JoinHandle<()> {
         std::thread::spawn(move || {
             let mut state: PlayerState = PlayerState {
                 reader: None,
@@ -68,18 +129,26 @@ impl AlsaPlayer {
                 alsa_buffer: None,
             };
             loop {
-                if let Ok(command) = channel.try_recv() {
-                    Self::process_command(command, &mut state);
-                }
-                if !Self::playback_poll(&mut state) {
-                    std::thread::sleep(Duration::from_millis(250));
+                if !state.playing {
+                    // block until a command arrives
+                    if let Some(cmd) = channel.blocking_recv() {
+                        if !Self::process_command(cmd, &mut state) {
+                            break;
+                        }
+                    }
+                } else {
+                    if let Ok(cmd) = channel.try_recv() {
+                        if !Self::process_command(cmd, &mut state) {
+                            break;
+                        }
+                    }
+                    Self::playback_poll(&mut state);
                 }
             }
-        });
-        
+        })
     }
 
-    fn process_command(command: ControlRequest, state: &mut PlayerState) {
+    fn process_command(command: ControlRequest, state: &mut PlayerState) -> bool {
         let mut setup_reload_required = false;
         match command {
             ControlRequest::LoadTrack(path) => {
@@ -118,10 +187,18 @@ impl AlsaPlayer {
                 state.paused = false;
                 state.released_pause = true;
             }
+            ControlRequest::Terminate => {
+                return false;
+            }
         }
         if setup_reload_required {
             if state.setup.is_none() {
-                state.setup = Some(AlsaSetup::new(state.device_name.clone()).expect("Alsa failed"));
+                let res = AlsaSetup::new(state.device_name.clone());
+                if res.is_none() {
+                    eprintln!("Alsa failed ");
+                    return false;
+                }
+                state.setup = Some(res.unwrap());
             } else {
                 state.setup.as_mut().unwrap().reprepare_alsa_sync();
             }
@@ -135,39 +212,43 @@ impl AlsaPlayer {
                 .update_hw_params(&state.format, alsa_buffer_size);
             state.alsa_buffer = Some(vec![0u8; alsa_buffer_size]);
         }
+        return true;
     }
 
     fn playback_poll(state: &mut PlayerState) -> bool {
         if state.playing {
-          
-            let alsa_buffer =state.alsa_buffer.as_mut().unwrap();
+            let alsa_buffer = state.alsa_buffer.as_mut().unwrap();
             let setup = state.setup.as_mut().unwrap();
             let reader = state.reader.as_mut().unwrap();
             let format = &state.format;
-            
+
             if state.paused {
                 if state.first_paused {
-                    unsafe { alsa::snd_pcm_pause(setup.playback_handle, 1); }
+                    unsafe {
+                        alsa::snd_pcm_pause(setup.playback_handle, 1);
+                    }
                     state.first_paused = false;
-                } 
+                }
                 return false;
-            } else if state.released_pause{
-                unsafe { alsa::snd_pcm_pause(setup.playback_handle, 0); }
+            } else if state.released_pause {
+                unsafe {
+                    alsa::snd_pcm_pause(setup.playback_handle, 0);
+                }
                 state.released_pause = false;
             }
-            
+
             let alsa_buffer_size = alsa_buffer.len();
             let num_channels = format.num_channels;
-            
-            
+
             let mut work_slices = setup.buffers.get_slice_for_reader();
-            let bytes = match reader.read(&mut work_slices, alsa_buffer_size / num_channels as usize) {
-                Ok(b) => b,
-                Err(_) => {
-                    eprintln!("read error");
-                    return false;
-                }
-            };
+            let bytes =
+                match reader.read(&mut work_slices, alsa_buffer_size / num_channels as usize) {
+                    Ok(b) => b,
+                    Err(_) => {
+                        eprintln!("read error");
+                        return false;
+                    }
+                };
             if bytes == 0 {
                 return false;
             }
@@ -200,7 +281,7 @@ impl AlsaPlayer {
                 state.playing = false;
                 return false;
             }
-            if reader.eof(){
+            if reader.eof() {
                 state.playing = false;
             }
             return true;
@@ -296,7 +377,7 @@ impl AlsaPlayer {
         }
     }
 }
-
+#[cfg(target_os = "linux")]
 extern crate alsa_sys as alsa;
 
 #[cfg(target_os = "linux")]

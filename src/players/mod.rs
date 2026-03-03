@@ -41,12 +41,13 @@ pub fn create_player_and_open(device_id: CString, path: &str) -> Option<Box<dyn 
 }
 #[async_trait]
 pub trait DSDPlayer: Send + Sync{
+    async fn start(&self);
     async fn pause(&self);
     async fn play(&self);
     async fn get_pos(&self) -> f64;
     async fn stop(&self);
     async fn is_playing(&self) -> bool;
-    async fn load_new_track(&mut self, filename: &str);
-    async fn seek(&mut self, percent: f64) -> Result<(), io::Error>;
+    async fn load_new_track(&self, filename: &str);
+    async fn seek(&self, percent: f64) -> Result<(), io::Error>;
     async fn get_format_info(&self) -> DSDFormat;
 }
