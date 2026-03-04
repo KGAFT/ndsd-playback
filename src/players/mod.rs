@@ -8,22 +8,16 @@ pub mod asio;
 #[cfg(target_os = "linux")]
 pub mod alsa;
 
-/*
+
 #[cfg(target_os = "linux")]
 pub fn enumerate_supported_devices() -> Vec<(CString, CString)> {
-    alsa::DsdPlayer::enumerate_supported_devices()
+    alsa::AlsaPlayer::enumerate_supported_devices()
 }
 #[cfg(target_os = "linux")]
 pub fn create_player(device_id: CString) -> Option<Box<dyn DSDPlayer>>{
-    Some(Box::new(alsa::DsdPlayer::new(device_id.to_str().unwrap())?))
-}
-#[cfg(target_os = "linux")]
-pub fn create_player_and_open(device_id: CString, path: &str) -> Option<Box<dyn DSDPlayer>>{
-    Some(Box::new(alsa::DsdPlayer::open(path, device_id.to_str().unwrap())?))
+    Some(Box::new(alsa::AlsaPlayer::new(device_id.to_str().unwrap())))
 }
 
-
- */
 #[cfg(target_os = "windows")]
 
 pub fn enumerate_supported_devices() -> Vec<(CString, CString)> {
@@ -35,10 +29,6 @@ pub fn create_player(device_id: CString) -> Option<Box<dyn DSDPlayer>>{
     Some(Box::new(asio::AsioDsdPlayer::new(device_id)))
 }
 
-#[cfg(target_os = "windows")]
-pub fn create_player_and_open(device_id: CString, path: &str) -> Option<Box<dyn DSDPlayer>>{
-    Some(Box::new(asio::AsioDsdPlayer::open(device_id, path)))
-}
 #[async_trait]
 pub trait DSDPlayer: Send + Sync{
     async fn start(&mut self);

@@ -11,11 +11,11 @@ pub mod utils;
 async fn main() {
     let devices = enumerate_supported_devices();
 
-    let mut player = create_player(devices[0].0.clone()).unwrap();
+    let mut player = create_player(devices[1].0.clone()).unwrap();
 
     player
         .load_new_track(
-            "F:\\The Axidentals - Axidentally on Purpose (1960) [4-track 3.75 ips, Pure DSD64 flat transfer]\\A1 Tangerine.dsf",
+            "/mnt/ssd/The Axidentals - Axidentally on Purpose (1960) [4-track 3.75 ips, Pure DSD64 flat transfer]/A1 Tangerine.dsf",
         )
         .await;
     player.start().await;
@@ -28,7 +28,7 @@ async fn main() {
     sleep(Duration::from_millis(3000)).await;
 
     player.load_new_track(
-        "F:\\Alphaville – Forever Young 1984\\A3 Big In Japan.dsf".into(),
+        "/mnt/ssd/Alphaville – Forever Young 1984/A3 Big In Japan.dsf".into(),
         )
         .await;
     sleep(Duration::from_millis(3000)).await;

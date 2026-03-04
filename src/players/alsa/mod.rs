@@ -80,7 +80,7 @@ pub struct AlsaPlayer {
 
 #[async_trait::async_trait]
 impl DSDPlayer for AlsaPlayer {
-    async fn start(&self) {
+    async fn start(&mut self) {
         self.message_channel
             .send(ControlRequest::Start)
             .await
@@ -107,14 +107,14 @@ impl DSDPlayer for AlsaPlayer {
         self.is_playing.load(Relaxed)
     }
 
-    async fn load_new_track(&self, filename: &str) {
+    async fn load_new_track(&mut self, filename: &str) {
         let _ = self
             .message_channel
             .send(ControlRequest::LoadTrack(PathBuf::from(filename)))
             .await;
     }
 
-    async fn seek(&self, percent: f64) -> Result<(), Error> {
+    async fn seek(&mut self, percent: f64) -> Result<(), Error> {
         let res = self
             .message_channel
             .send(ControlRequest::Seek(percent))

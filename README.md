@@ -38,8 +38,11 @@ Install the LLVM prebuild binaries, download it from the llvm project github rep
 Set LIBCLANG_PATH system environment variable pointing to the root of llvm/bin. E.g: C:\clang+llvm-22.1.0-x86_64-pc-windows-msvc\bin.
 Also pass this directory to the system PATH variable.
 
-If you have problems with function ASIOSetSampleRate and ASIOGetSampleRate it is an msvc bug,
-go to your asio sdk, find asio.h and replace this:
+If you have problems with function ASIOSetSampleRate and ASIOGetSampleRate it is an msvc bug.
+Download and install ASIO SDK to your windows machine
+Create the environment variable in the system space/userspace "CPAL_ASIO_DIR" pointing to the root of sdk
+
+Go to your asio sdk, find asio.h and replace this:
 
 ```
 #if IEEE754_64FLOAT
