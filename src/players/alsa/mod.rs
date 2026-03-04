@@ -21,11 +21,9 @@ use std::ffi::{CStr, CString, c_char, c_void};
 use std::io::{Error, ErrorKind};
 #[cfg(target_os = "linux")]
 use std::path::PathBuf;
-#[cfg(target_os = "linux")]
 
-use std::time::Duration;
 #[cfg(target_os = "linux")]
-use std::{io, ptr};
+use std::ptr;
 #[cfg(target_os = "linux")]
 
 use std::sync::Arc;
@@ -67,7 +65,7 @@ struct PlayerState {
     alsa_buffer: Option<Vec<u8>>,
 }
 #[cfg(target_os = "linux")]
-
+#[allow(unused)]
 pub struct AlsaPlayer {
     device_name: CString,
     player_thread: std::thread::JoinHandle<()>,
@@ -134,7 +132,7 @@ impl DSDPlayer for AlsaPlayer {
 impl AlsaPlayer {
     pub fn new(device_name: &str) -> Self {
         let device = std::ffi::CString::new(device_name).unwrap();
-        let mut mpsc = mpsc::channel::<ControlRequest>(16);
+        let mpsc = mpsc::channel::<ControlRequest>(16);
         let cur_pos = Arc::new(AtomicF64::new(0.));
         let is_playing = Arc::new(AtomicBool::new(false));
         let cur_format = Arc::new(Mutex::new(DSDFormat::default()));
@@ -206,7 +204,7 @@ impl AlsaPlayer {
                 }
             }
             ControlRequest::Start => {
-                if let Some(mut reader) = state.reader.as_mut() {
+                if let Some(reader) = state.reader.as_mut() {
                     if state.setup.is_none() {
                         setup_reload_required = true;
                     }
@@ -220,7 +218,7 @@ impl AlsaPlayer {
                 state.playing = false;
             }
             ControlRequest::Seek(f64) => {
-                if let Some(mut reader) = state.reader.as_mut() {
+                if let Some(reader) = state.reader.as_mut() {
                     let _ = reader.seek_percent(f64);
                 }
             }
@@ -426,6 +424,7 @@ impl AlsaPlayer {
 extern crate alsa_sys as alsa;
 
 #[cfg(target_os = "linux")]
+#[allow(unused)]
 struct Buffers {
     work0: Vec<u8>,
     work1: Vec<u8>,
@@ -489,7 +488,7 @@ impl Buffers {
         }
         (bytes / 4) as i64
     }
-
+    #[allow(unused)]
     pub fn alsa_buffer_size(&self) -> usize {
         self.alsa_buffer_size
     }

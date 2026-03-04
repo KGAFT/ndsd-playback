@@ -1,5 +1,5 @@
 
-use crate::players::{create_player, enumerate_supported_devices, DSDPlayer};
+use crate::players::{create_player, enumerate_supported_devices};
 use std::time::Duration;
 use tokio::time::sleep;
 
