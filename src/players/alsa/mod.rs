@@ -1,26 +1,46 @@
-#![cfg(target_os = "linux")]
+#[cfg(target_os = "linux")]
 use crate::dsd_readers;
+#[cfg(target_os = "linux")]
+
 use crate::dsd_readers::{DSDFormat, DSDReader};
+#[cfg(target_os = "linux")]
+
 use crate::players::DSDPlayer;
+#[cfg(target_os = "linux")]
+
 use atomic_float::AtomicF64;
+#[cfg(target_os = "linux")]
+
 use crate::utils::bit_reverse_table::BIT_REVERSE_TABLE;
 #[cfg(target_os = "linux")]
 use alsa_sys::{SND_PCM_NONBLOCK, SND_PCM_STREAM_PLAYBACK};
 #[cfg(target_os = "linux")]
 use std::ffi::{CStr, CString, c_char, c_void};
+#[cfg(target_os = "linux")]
+
 use std::io::{Error, ErrorKind};
 #[cfg(target_os = "linux")]
 use std::path::PathBuf;
+#[cfg(target_os = "linux")]
+
 use std::time::Duration;
 #[cfg(target_os = "linux")]
 use std::{io, ptr};
+#[cfg(target_os = "linux")]
+
 use std::sync::Arc;
+#[cfg(target_os = "linux")]
+
 use std::sync::atomic::AtomicBool;
+#[cfg(target_os = "linux")]
+
 use std::sync::atomic::Ordering::Relaxed;
 #[cfg(target_os = "linux")]
 use tokio::sync::mpsc::Sender;
 #[cfg(target_os = "linux")]
 use tokio::sync::{mpsc, mpsc::Receiver};
+#[cfg(target_os = "linux")]
+
 use tokio::sync::Mutex;
 
 #[cfg(target_os = "linux")]
@@ -56,6 +76,8 @@ pub struct AlsaPlayer {
     is_playing: Arc<AtomicBool>,
     cur_format: Arc<Mutex<DSDFormat>>
 }
+#[cfg(target_os = "linux")]
+
 #[async_trait::async_trait]
 impl DSDPlayer for AlsaPlayer {
     async fn start(&self) {
@@ -472,6 +494,7 @@ impl Buffers {
         self.alsa_buffer_size
     }
 }
+#[cfg(target_os = "linux")]
 
 pub struct AlsaSetup {
     playback_handle: *mut alsa::snd_pcm_t,
@@ -479,9 +502,13 @@ pub struct AlsaSetup {
     buffers: Buffers,
     current_device: CString,
 }
+#[cfg(target_os = "linux")]
 
 unsafe impl Send for AlsaSetup {}
+#[cfg(target_os = "linux")]
+
 unsafe impl Sync for AlsaSetup {}
+#[cfg(target_os = "linux")]
 
 impl AlsaSetup {
     pub fn new(device: CString) -> Option<Self> {
@@ -601,6 +628,7 @@ impl AlsaSetup {
         }
     }
 }
+#[cfg(target_os = "linux")]
 
 impl Drop for AlsaSetup {
     fn drop(&mut self) {

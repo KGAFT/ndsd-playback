@@ -24,7 +24,6 @@ use std::ptr::null_mut;
 use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
 use std::thread::sleep;
 use std::time::Duration;
-use crate::players::alsa::DsdPlayer;
 // ---------------------------------------------------------------------------
 // Win32 import (avoid new deps, keep it minimal).
 // ---------------------------------------------------------------------------
@@ -663,9 +662,21 @@ impl AsioDsdPlayer {
         }
     }
 }
-
+#[async_trait::async_trait]
 impl DSDPlayer for AsioDsdPlayer {
-    fn get_current_position_percents(&self) -> f64 {
+
+
+    async fn pause(&self) {
+        self.paused.store(true, Relaxed);
+        self.is_playing.store(false, Relaxed);
+    }
+
+    async fn play(&self) {
+        self.paused.store(false, Relaxed);
+        self.is_playing.store(true, Relaxed);
+    }
+
+    async fn get_pos(&self) -> f64 {
         if let Some(reader) = self.reader.as_ref() {
             reader.get_position_percent()
         } else {
@@ -673,21 +684,7 @@ impl DSDPlayer for AsioDsdPlayer {
         }
     }
 
-    fn pause(&self) {
-        self.paused.store(true, Relaxed);
-        self.is_playing.store(false, Relaxed);
-    }
-
-    fn play(&self) {
-        self.paused.store(false, Relaxed);
-        self.is_playing.store(true, Relaxed);
-    }
-
-    fn get_pos(&self) -> f64 {
-        self.get_current_position_percents()
-    }
-
-    fn stop(&self) {
+    async fn stop(&self) {
         self.stopped.store(true, Relaxed);
         self.is_playing.store(false, Relaxed);
         unsafe {
@@ -698,11 +695,11 @@ impl DSDPlayer for AsioDsdPlayer {
         }
     }
 
-    fn is_playing(&self) -> bool {
+    async fn is_playing(&self) -> bool {
         self.is_playing.load(Relaxed) && !self.paused.load(Relaxed) && !self.stopped.load(Relaxed)
     }
 
-    fn load_new_track(&mut self, filename: &str) {
+    async fn load_new_track(&mut self, filename: &str) {
         let mut format = DSDFormat::default();
         let reader = dsd_readers::open_dsd_auto(filename, &mut format).expect("Failed to open DSD");
 
@@ -739,7 +736,7 @@ impl DSDPlayer for AsioDsdPlayer {
             DsdFormat::Int8Ner8 => file_is_lsb,
         };
     }
-    fn seek(&mut self, percent: f64) -> Result<(), io::Error> {
+    async fn seek(&mut self, percent: f64) -> Result<(), io::Error> {
         self.reader_semaphore.acquire();
         let res = if let Some(reader) = self.reader.as_mut() {
             reader.seek_percent(percent)
@@ -750,7 +747,11 @@ impl DSDPlayer for AsioDsdPlayer {
         res
     }
 
-    fn play_on_current_thread(&mut self) {
+    async fn get_format_info(&self) -> DSDFormat {
+        self.format.clone()
+    }
+
+    async fn start(&mut self) {
         unsafe {
             // Ensure ASIO is started.
             if self.setup.is_none() {
@@ -760,15 +761,6 @@ impl DSDPlayer for AsioDsdPlayer {
             }
             let _ = self.start();
         }
-
-        // Block like ALSA example: ASIO audio thread is driver-owned; we just wait.
-        while !self.stopped.load(Relaxed) {
-            sleep(Duration::from_millis(50));
-        }
-    }
-
-    fn get_format_info(&self) -> DSDFormat {
-        self.format.clone()
     }
 }
 
