@@ -13,7 +13,7 @@ pub struct DSFReader {
     pos: usize,
     total_samples: u64,
     read_samples: u64,
-    data_start: u64, // <---- new: start offset of "data" chunk content
+    data_start: u64,
 }
 
 impl DSFReader {
@@ -32,7 +32,7 @@ impl DSFReader {
         })
     }
 
-    pub fn empty() -> Self{
+    pub fn empty() -> Self {
         Self {
             file: File::create("super_empty").unwrap(),
             buf: Vec::new(),
@@ -94,7 +94,9 @@ impl DSDReader for DSFReader {
 
         let sample_count = self.file.read_u64::<LittleEndian>()?;
         format.total_samples = sample_count;
-        self.total_samples = sample_count;
+        // DSF sample_count is in bits per channel; convert to bytes per channel
+        // so all internal tracking is in bytes-per-channel
+        self.total_samples = sample_count / 8;
 
         let block_size = self.file.read_u32::<LittleEndian>()? as usize;
         self.blocksize = block_size;
@@ -126,7 +128,6 @@ impl DSDReader for DSFReader {
 
         while want > 0 {
             if self.pos == self.filled {
-                // read next interleaved block
                 let to_read = self.blocksize * self.ch;
                 self.buf.resize(to_read, 0);
                 let n = self.file.read(&mut self.buf)?;
@@ -151,7 +152,8 @@ impl DSDReader for DSFReader {
             read_bytes += size;
         }
 
-        self.read_samples = self.read_samples.saturating_add((read_bytes as u64) * 8);
+        // accumulate in bytes-per-channel, matching total_samples units
+        self.read_samples = self.read_samples.saturating_add(read_bytes as u64);
         Ok(read_bytes)
     }
 
@@ -162,23 +164,25 @@ impl DSDReader for DSFReader {
                 "percent out of range",
             ));
         }
+        // total_samples is in bytes-per-channel, so target is too
         let target_sample = (self.total_samples as f64 * percent) as u64;
         self.seek_samples(target_sample)
     }
 
     fn seek_samples(&mut self, sample_index: u64) -> io::Result<()> {
-        // DSD = 1 bit per sample per channel
-        let total_bits = sample_index * self.ch as u64;
-        let total_bytes = total_bits / 8;
+        // sample_index is in bytes-per-channel
+        // total file bytes to skip = sample_index * ch
+        let total_bytes = sample_index * self.ch as u64;
 
-        // align to nearest block boundary
-        let aligned_bytes =
-            (total_bytes / (self.blocksize * self.ch) as u64) * (self.blocksize * self.ch) as u64;
+        // align down to block boundary
+        let block_bytes = (self.blocksize * self.ch) as u64;
+        let aligned_total_bytes = (total_bytes / block_bytes) * block_bytes;
 
-        let offset = self.data_start + aligned_bytes;
+        let offset = self.data_start + aligned_total_bytes;
         self.file.seek(SeekFrom::Start(offset))?;
 
-        self.read_samples = aligned_bytes * 8;
+        // read_samples = aligned bytes per channel
+        self.read_samples = aligned_total_bytes / self.ch as u64;
         self.pos = 0;
         self.filled = 0;
 
@@ -186,23 +190,17 @@ impl DSDReader for DSFReader {
     }
 
     fn get_position_frames(&self) -> u64 {
-        // self.read_samples counts *bits*, so divide by channels and by 1 bit/sample
-        // That gives total DSD frames read so far
-        if self.ch == 0 {
-            return 0;
-        }
-        self.read_samples / (self.ch as u64)
+        self.read_samples
     }
 
     fn get_position_percent(&self) -> f64 {
         if self.total_samples == 0 {
             return 0.0;
         }
-        let frames = self.get_position_frames();
-        (frames as f64 / self.total_samples as f64).min(1.0)
+        (self.read_samples as f64 / self.total_samples as f64).min(1.0)
     }
 
     fn eof(&self) -> bool {
-        self.read_samples == self.total_samples
+        self.read_samples >= self.total_samples
     }
 }

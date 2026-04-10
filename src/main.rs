@@ -10,12 +10,14 @@ pub mod utils;
 #[tokio::main]
 async fn main() {
     let devices = enumerate_supported_devices();
-
-    let mut player = create_player(devices[1].0.clone()).unwrap();
+    devices.iter().for_each(|device| {
+        eprintln!("{:?}{:?}", device.0, device.1);
+    });
+    let mut player = create_player(devices[2].0.clone()).unwrap();
 
     player
         .load_new_track(
-            "/mnt/ssd/The Axidentals - Axidentally on Purpose (1960) [4-track 3.75 ips, Pure DSD64 flat transfer]/A1 Tangerine.dsf",
+            "/mnt/hdd/Music/SACD_Michael Jackson_Bad - 1987 (Epic 28.3P-800 LP-Japan)/01. Bad.dff",
         )
         .await;
     player.start().await;
@@ -28,12 +30,16 @@ async fn main() {
     sleep(Duration::from_millis(3000)).await;
 
     player.load_new_track(
-        "/mnt/ssd/Alphaville – Forever Young 1984/A3 Big In Japan.dsf".into(),
+        "/mnt/hdd/Music/Led Zeppelin - Led Zeppelin IV 1971 - 2014 DSD/04 - Stairway To Heaven.dsf".into(),
         )
         .await;
     sleep(Duration::from_millis(3000)).await;
 
     player.start().await;
-    player.seek(0.9f64).await.unwrap();
-    sleep(Duration::from_millis(3000)).await;
+    sleep(Duration::from_millis(1000)).await;
+    player.seek(0.98f64).await.unwrap();
+    loop {
+        println!("Progress {}", player.get_pos().await);
+        sleep(Duration::from_millis(500)).await;
+    }
 }

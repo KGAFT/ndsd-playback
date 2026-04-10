@@ -246,7 +246,7 @@ impl AlsaPlayer {
                 state.setup.as_mut().unwrap().reprepare_alsa_sync();
             }
             let alsa_buffer_size = 8192 * (state.format.sampling_rate / 2822400) as usize;
-            let buffers = Buffers::new(alsa_buffer_size);
+            let buffers = Buffers::new(alsa_buffer_size, state.format.num_channels as usize);
             state.setup.as_mut().unwrap().buffers = buffers;
             state
                 .setup
@@ -284,8 +284,7 @@ impl AlsaPlayer {
             let num_channels = format.num_channels;
 
             let mut work_slices = setup.buffers.get_slice_for_reader();
-            let bytes =
-                match reader.read(&mut work_slices, alsa_buffer_size / num_channels as usize) {
+            let bytes = match reader.read(&mut work_slices, alsa_buffer_size / num_channels as usize)  {
                     Ok(b) => b,
                     Err(_) => {
                         eprintln!("read error");
@@ -345,14 +344,7 @@ impl AlsaPlayer {
             )
         };
         if err < 0 {
-            unsafe {
-                eprintln!(
-                    "Failed to open device: {}",
-                    CString::from(CStr::from_ptr(alsa::snd_strerror(err)))
-                        .to_str()
-                        .unwrap()
-                );
-            }
+
             return false;
         }
         unsafe {
@@ -405,11 +397,6 @@ impl AlsaPlayer {
                 let desc_cstr = CStr::from_ptr(desc);
                 if !name.is_null() {
                     if Self::support_dsd(name) {
-                        eprintln!(
-                            "cur support: {},{}",
-                            name_cstr.to_str().unwrap(),
-                            desc_cstr.to_str().unwrap()
-                        );
                         res.push((CString::from_raw(name), CString::from_raw(desc)));
                     }
                 }
@@ -426,22 +413,25 @@ extern crate alsa_sys as alsa;
 #[cfg(target_os = "linux")]
 #[allow(unused)]
 struct Buffers {
-    work0: Vec<u8>,
-    work1: Vec<u8>,
+    work: Vec<Vec<u8>>,
     alsa_buffer_size: usize,
+    num_channels: usize,
 }
 #[cfg(target_os = "linux")]
 impl Buffers {
-    pub fn new(alsa_buffer_size: usize) -> Self {
+    pub fn new(alsa_buffer_size: usize, num_channels: usize) -> Self {
         Self {
-            work0: vec![0u8; alsa_buffer_size >> 1],
-            work1: vec![0u8; alsa_buffer_size >> 1],
+            work: (0..num_channels)
+                .map(|_| vec![0u8; alsa_buffer_size / num_channels])
+                .collect(),
             alsa_buffer_size,
+            num_channels,
         }
     }
 
-    pub fn get_slice_for_reader(&mut self) -> [&mut [u8]; 2] {
-        [self.work0.as_mut_slice(), self.work1.as_mut_slice()]
+
+    pub fn get_slice_for_reader(&mut self) -> Vec<&mut [u8]> {
+        self.work.iter_mut().map(|v| v.as_mut_slice()).collect()
     }
 
     pub fn populate_alsa_buffer(
@@ -450,41 +440,21 @@ impl Buffers {
         bytes: usize,
         lsb_first: bool,
     ) -> i64 {
-        let mut i = 0usize;
-
-        if lsb_first {
-            // bit reverse per byte
-            let mut j = 0usize;
-            while j + 3 < bytes {
-                alsa_buffer[i + 0] = BIT_REVERSE_TABLE[self.work0[j + 0] as usize];
-                alsa_buffer[i + 1] = BIT_REVERSE_TABLE[self.work0[j + 1] as usize];
-                alsa_buffer[i + 2] = BIT_REVERSE_TABLE[self.work0[j + 2] as usize];
-                alsa_buffer[i + 3] = BIT_REVERSE_TABLE[self.work0[j + 3] as usize];
-
-                alsa_buffer[i + 4] = BIT_REVERSE_TABLE[self.work1[j + 0] as usize];
-                alsa_buffer[i + 5] = BIT_REVERSE_TABLE[self.work1[j + 1] as usize];
-                alsa_buffer[i + 6] = BIT_REVERSE_TABLE[self.work1[j + 2] as usize];
-                alsa_buffer[i + 7] = BIT_REVERSE_TABLE[self.work1[j + 3] as usize];
-
-                i += 8;
-                j += 4;
+        let mut out = 0usize;
+        let mut j = 0usize;
+        while j + 3 < bytes {
+            for ch in 0..self.num_channels {
+                for k in 0..4 {
+                    let byte = self.work[ch][j + k];
+                    alsa_buffer[out] = if lsb_first {
+                        BIT_REVERSE_TABLE[byte as usize]
+                    } else {
+                        byte
+                    };
+                    out += 1;
+                }
             }
-        } else {
-            let mut j = 0usize;
-            while j + 3 < bytes {
-                alsa_buffer[i + 0] = self.work0[j + 0];
-                alsa_buffer[i + 1] = self.work0[j + 1];
-                alsa_buffer[i + 2] = self.work0[j + 2];
-                alsa_buffer[i + 3] = self.work0[j + 3];
-
-                alsa_buffer[i + 4] = self.work1[j + 0];
-                alsa_buffer[i + 5] = self.work1[j + 1];
-                alsa_buffer[i + 6] = self.work1[j + 2];
-                alsa_buffer[i + 7] = self.work1[j + 3];
-
-                i += 8;
-                j += 4;
-            }
+            j += 4;
         }
         (bytes / 4) as i64
     }
@@ -512,7 +482,7 @@ unsafe impl Sync for AlsaSetup {}
 impl AlsaSetup {
     pub fn new(device: CString) -> Option<Self> {
         unsafe {
-            let buffers = Buffers::new(1);
+            let buffers = Buffers::new(1, 2);
             let err: i32;
             let mut playback_handle: *mut alsa::snd_pcm_t = ptr::null_mut();
             let hw_params: *mut alsa::snd_pcm_hw_params_t = ptr::null_mut();
