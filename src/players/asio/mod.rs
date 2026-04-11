@@ -1,7 +1,3 @@
-//! Windows ASIO native DSD player.
-//!
-//! This module is intentionally written to preserve the **control flow** from the provided C++
-//! reference as closely as Rust/FFI allows.
 
 #![cfg(target_os = "windows")]
 
@@ -536,7 +532,7 @@ impl AsioDsdPlayer {
         self.need_bit_reverse = match self.dsd_context.sample_format {
             DsdFormat::Int8Lsb1 => !file_is_lsb,
             DsdFormat::Int8Msb1 => file_is_lsb,
-            DsdFormat::Int8Ner8 => file_is_lsb,
+            DsdFormat::Int8Ner8 => false,
         };
 
         self.setup = Some(setup);
@@ -733,7 +729,7 @@ impl DSDPlayer for AsioDsdPlayer {
         self.need_bit_reverse = match self.dsd_context.sample_format {
             DsdFormat::Int8Lsb1 => !file_is_lsb,
             DsdFormat::Int8Msb1 => file_is_lsb,
-            DsdFormat::Int8Ner8 => file_is_lsb,
+            DsdFormat::Int8Ner8 => false,
         };
     }
     async fn seek(&mut self, percent: f64) -> Result<(), io::Error> {

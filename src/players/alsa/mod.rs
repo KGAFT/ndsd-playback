@@ -1,23 +1,18 @@
 #[cfg(target_os = "linux")]
 use crate::dsd_readers;
 #[cfg(target_os = "linux")]
-
 use crate::dsd_readers::{DSDFormat, DSDReader};
 #[cfg(target_os = "linux")]
-
 use crate::players::DSDPlayer;
 #[cfg(target_os = "linux")]
-
-use atomic_float::AtomicF64;
-#[cfg(target_os = "linux")]
-
 use crate::utils::bit_reverse_table::BIT_REVERSE_TABLE;
 #[cfg(target_os = "linux")]
 use alsa_sys::{SND_PCM_NONBLOCK, SND_PCM_STREAM_PLAYBACK};
 #[cfg(target_os = "linux")]
+use atomic_float::AtomicF64;
+#[cfg(target_os = "linux")]
 use std::ffi::{CStr, CString, c_char, c_void};
 #[cfg(target_os = "linux")]
-
 use std::io::{Error, ErrorKind};
 #[cfg(target_os = "linux")]
 use std::path::PathBuf;
@@ -25,21 +20,17 @@ use std::path::PathBuf;
 #[cfg(target_os = "linux")]
 use std::ptr;
 #[cfg(target_os = "linux")]
-
 use std::sync::Arc;
 #[cfg(target_os = "linux")]
-
 use std::sync::atomic::AtomicBool;
 #[cfg(target_os = "linux")]
-
 use std::sync::atomic::Ordering::Relaxed;
+#[cfg(target_os = "linux")]
+use tokio::sync::Mutex;
 #[cfg(target_os = "linux")]
 use tokio::sync::mpsc::Sender;
 #[cfg(target_os = "linux")]
 use tokio::sync::{mpsc, mpsc::Receiver};
-#[cfg(target_os = "linux")]
-
-use tokio::sync::Mutex;
 
 #[cfg(target_os = "linux")]
 pub enum ControlRequest {
@@ -72,10 +63,9 @@ pub struct AlsaPlayer {
     message_channel: Sender<ControlRequest>,
     current_pos: Arc<AtomicF64>,
     is_playing: Arc<AtomicBool>,
-    cur_format: Arc<Mutex<DSDFormat>>
+    cur_format: Arc<Mutex<DSDFormat>>,
 }
 #[cfg(target_os = "linux")]
-
 #[async_trait::async_trait]
 impl DSDPlayer for AlsaPlayer {
     async fn start(&mut self) {
@@ -138,7 +128,13 @@ impl AlsaPlayer {
         let cur_format = Arc::new(Mutex::new(DSDFormat::default()));
         Self {
             device_name: device.clone(),
-            player_thread: Self::player_main(device, mpsc.1, cur_pos.clone(), is_playing.clone(), cur_format.clone()),
+            player_thread: Self::player_main(
+                device,
+                mpsc.1,
+                cur_pos.clone(),
+                is_playing.clone(),
+                cur_format.clone(),
+            ),
             message_channel: mpsc.0,
             current_pos: cur_pos,
             is_playing,
@@ -146,14 +142,12 @@ impl AlsaPlayer {
         }
     }
 
-
-
     fn player_main(
         device_name: CString,
         mut channel: Receiver<ControlRequest>,
         pos: Arc<AtomicF64>,
         is_playing: Arc<AtomicBool>,
-        cur_format: Arc<Mutex<DSDFormat>>
+        cur_format: Arc<Mutex<DSDFormat>>,
     ) -> std::thread::JoinHandle<()> {
         std::thread::spawn(move || {
             let mut state: PlayerState = PlayerState {
@@ -183,14 +177,21 @@ impl AlsaPlayer {
                         }
                     }
                     Self::playback_poll(&mut state);
-                    pos.store(state.reader.as_mut().unwrap().get_position_percent(), Relaxed);
+                    pos.store(
+                        state.reader.as_mut().unwrap().get_position_percent(),
+                        Relaxed,
+                    );
                     is_playing.store(true, Relaxed);
                 }
             }
         })
     }
 
-    fn process_command(command: ControlRequest, state: &mut PlayerState, cur_format: Arc<Mutex<DSDFormat>>) -> bool {
+    fn process_command(
+        command: ControlRequest,
+        state: &mut PlayerState,
+        cur_format: Arc<Mutex<DSDFormat>>,
+    ) -> bool {
         let mut setup_reload_required = false;
         match command {
             ControlRequest::LoadTrack(path) => {
@@ -284,7 +285,8 @@ impl AlsaPlayer {
             let num_channels = format.num_channels;
 
             let mut work_slices = setup.buffers.get_slice_for_reader();
-            let bytes = match reader.read(&mut work_slices, alsa_buffer_size / num_channels as usize)  {
+            let bytes =
+                match reader.read(&mut work_slices, alsa_buffer_size / num_channels as usize) {
                     Ok(b) => b,
                     Err(_) => {
                         eprintln!("read error");
@@ -298,6 +300,8 @@ impl AlsaPlayer {
                 alsa_buffer.as_mut_slice(),
                 bytes,
                 format.is_lsb_first,
+                setup.bytes_per_word,
+                setup.word_is_le
             );
             let alsa_ptr = alsa_buffer.as_ptr() as *const std::ffi::c_void;
 
@@ -314,9 +318,8 @@ impl AlsaPlayer {
                 return false;
             }
             if written == -32 {
-                eprintln!("cannot write audio frame EPIPE");
-                state.playing = false;
-                return false;
+                unsafe { alsa::snd_pcm_prepare(setup.playback_handle); }
+                return true;
             }
             if written == -86 {
                 eprintln!("cannot write audio frame ESTRPIPE");
@@ -344,7 +347,6 @@ impl AlsaPlayer {
             )
         };
         if err < 0 {
-
             return false;
         }
         unsafe {
@@ -353,14 +355,7 @@ impl AlsaPlayer {
         unsafe {
             alsa::snd_pcm_hw_params_any(handle, params);
         }
-        let mut supported = false;
-        unsafe {
-            if alsa::snd_pcm_hw_params_test_format(handle, params, alsa::SND_PCM_FORMAT_DSD_U32_BE)
-                == 0
-            {
-                supported = true;
-            }
-        }
+        let supported = AlsaSetup::detect_dsd_format(handle, params).is_some();
         unsafe {
             alsa::snd_pcm_hw_params_free(params);
         }
@@ -397,7 +392,7 @@ impl AlsaPlayer {
                 let desc_cstr = CStr::from_ptr(desc);
                 if !name.is_null() {
                     if Self::support_dsd(name) {
-                        res.push((CString::from_raw(name), CString::from_raw(desc)));
+                        res.push(( CStr::from_ptr(name).to_owned(),  CStr::from_ptr(name).to_owned()));
                     }
                 }
                 n = n.offset(1);
@@ -429,34 +424,38 @@ impl Buffers {
         }
     }
 
-
     pub fn get_slice_for_reader(&mut self) -> Vec<&mut [u8]> {
         self.work.iter_mut().map(|v| v.as_mut_slice()).collect()
     }
-
     pub fn populate_alsa_buffer(
         &self,
         alsa_buffer: &mut [u8],
         bytes: usize,
         lsb_first: bool,
+        bytes_per_word: usize,
+        word_is_le: bool,
     ) -> i64 {
         let mut out = 0usize;
         let mut j = 0usize;
-        while j + 3 < bytes {
+        while j + bytes_per_word - 1 < bytes {
             for ch in 0..self.num_channels {
-                for k in 0..4 {
+                let mut word = [0u8; 4];
+                for k in 0..bytes_per_word {
                     let byte = self.work[ch][j + k];
-                    alsa_buffer[out] = if lsb_first {
-                        BIT_REVERSE_TABLE[byte as usize]
-                    } else {
-                        byte
-                    };
+                    word[k] = if lsb_first { BIT_REVERSE_TABLE[byte as usize] } else { byte };
+                }
+                // Byte-swap the word for LE formats
+                if word_is_le {
+                    word[..bytes_per_word].reverse();
+                }
+                for k in 0..bytes_per_word {
+                    alsa_buffer[out] = word[k];
                     out += 1;
                 }
             }
-            j += 4;
+            j += bytes_per_word;
         }
-        (bytes / 4) as i64
+        (bytes / bytes_per_word) as i64
     }
     #[allow(unused)]
     pub fn alsa_buffer_size(&self) -> usize {
@@ -470,6 +469,9 @@ pub struct AlsaSetup {
     hw_params: *mut alsa::snd_pcm_hw_params_t,
     buffers: Buffers,
     current_device: CString,
+    dsd_format: alsa::snd_pcm_format_t,
+    bytes_per_word: usize,
+    word_is_le: bool,
 }
 #[cfg(target_os = "linux")]
 
@@ -502,6 +504,9 @@ impl AlsaSetup {
                 hw_params,
                 buffers,
                 current_device: device,
+                dsd_format: alsa::SND_PCM_FORMAT_DSD_U32_LE,
+                bytes_per_word: 4,
+                word_is_le: true,
             };
             res.setup_params();
             Some(res)
@@ -550,51 +555,79 @@ impl AlsaSetup {
 
     fn update_hw_params(&mut self, format: &DSDFormat, alsa_buffer_size: usize) {
         unsafe {
-            let rate = format.sampling_rate / 8 / 4;
-            if alsa::snd_pcm_hw_params_set_rate(
-                self.playback_handle.clone(),
-                self.hw_params.clone(),
-                rate,
-                0,
-            ) < 0
-            {
+            // Detect the best supported DSD format for this device
+            let dsd_fmt = Self::detect_dsd_format(self.playback_handle, self.hw_params)
+                .expect("no supported DSD format found");
+            self.dsd_format = dsd_fmt;
+            self.bytes_per_word = match dsd_fmt {
+                alsa::SND_PCM_FORMAT_DSD_U8 => 1,
+                alsa::SND_PCM_FORMAT_DSD_U16_BE | alsa::SND_PCM_FORMAT_DSD_U16_LE => 2,
+                alsa::SND_PCM_FORMAT_DSD_U32_LE | alsa::SND_PCM_FORMAT_DSD_U32_BE => 4,
+                _ => panic!("unsupported DSD format"),
+            };
+            self.word_is_le = matches!(
+                dsd_fmt,
+                alsa::SND_PCM_FORMAT_DSD_U32_LE | alsa::SND_PCM_FORMAT_DSD_U16_LE
+            );
+            // Rate is DSD bit-rate divided by bits-per-word (8 for U8, 16 for U16, 32 for U32)
+            let rate = format.sampling_rate / 8 / self.bytes_per_word as u32;
+            if alsa::snd_pcm_hw_params_set_rate(self.playback_handle, self.hw_params, rate, 0) < 0 {
                 panic!("cannot set sample rate");
             }
             if alsa::snd_pcm_hw_params_set_channels(
-                self.playback_handle.clone(),
-                self.hw_params.clone(),
-                format.num_channels as u32,
+                self.playback_handle,
+                self.hw_params,
+                format.num_channels,
             ) < 0
             {
                 panic!("cannot set channel count");
             }
-            // set DSD format constant
-            if alsa::snd_pcm_hw_params_set_format(
-                self.playback_handle.clone(),
-                self.hw_params.clone(),
-                alsa::SND_PCM_FORMAT_DSD_U32_BE,
-            ) < 0
+            if alsa::snd_pcm_hw_params_set_format(self.playback_handle, self.hw_params, dsd_fmt) < 0
             {
                 panic!("cannot set sample format");
             }
 
             let mut frames: alsa::snd_pcm_uframes_t =
-                (alsa_buffer_size / format.num_channels as usize / 4) as alsa::snd_pcm_uframes_t;
+                (alsa_buffer_size / format.num_channels as usize / self.bytes_per_word)
+                    as alsa::snd_pcm_uframes_t;
             let mut dir: i32 = 0;
             alsa::snd_pcm_hw_params_set_period_size_near(
-                self.playback_handle.clone(),
-                self.hw_params.clone(),
+                self.playback_handle,
+                self.hw_params,
                 &mut frames,
                 &mut dir,
             );
-            let err = alsa::snd_pcm_hw_params(self.playback_handle.clone(), self.hw_params);
+            let err = alsa::snd_pcm_hw_params(self.playback_handle, self.hw_params);
             if err < 0 {
                 panic!("cannot set parameters {}", err);
             }
-            if alsa::snd_pcm_prepare(self.playback_handle.clone()) < 0 {
+            if alsa::snd_pcm_prepare(self.playback_handle) < 0 {
                 panic!("cannot prepare audio interface for use");
             }
         }
+    }
+
+    fn detect_dsd_format(
+        handle: *mut alsa::snd_pcm_t,
+        params: *mut alsa::snd_pcm_hw_params_t,
+    ) -> Option<alsa::snd_pcm_format_t> {
+
+        let candidates = [
+            alsa::SND_PCM_FORMAT_DSD_U32_BE,
+            alsa::SND_PCM_FORMAT_DSD_U32_LE,
+            alsa::SND_PCM_FORMAT_DSD_U16_BE,
+            alsa::SND_PCM_FORMAT_DSD_U16_LE,
+            alsa::SND_PCM_FORMAT_DSD_U8,
+        ];
+
+        for &fmt in &candidates {
+            let supported =
+                unsafe { alsa::snd_pcm_hw_params_test_format(handle, params, fmt) == 0 };
+            if supported {
+                return Some(fmt);
+            }
+        }
+        None
     }
 }
 #[cfg(target_os = "linux")]

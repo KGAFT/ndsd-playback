@@ -13,7 +13,7 @@ async fn main() {
     devices.iter().for_each(|device| {
         eprintln!("{:?}{:?}", device.0, device.1);
     });
-    let mut player = create_player(devices[2].0.clone()).unwrap();
+    let mut player = create_player(devices[1].0.clone()).unwrap();
 
     player
         .load_new_track(
@@ -30,10 +30,10 @@ async fn main() {
     sleep(Duration::from_millis(3000)).await;
 
     player.load_new_track(
-        "/mnt/hdd/Music/Led Zeppelin - Led Zeppelin IV 1971 - 2014 DSD/04 - Stairway To Heaven.dsf".into(),
+        "/home/larry/Downloads/Miles Davis - Kind Of Blue (HDTT13879) DSD256/01-So What.dsf".into(),
         )
         .await;
-    sleep(Duration::from_millis(3000)).await;
+    sleep(Duration::from_millis(15000)).await;
 
     player.start().await;
     sleep(Duration::from_millis(1000)).await;
