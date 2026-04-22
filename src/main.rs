@@ -2,14 +2,22 @@
 use crate::players::{create_player, enumerate_supported_devices};
 use std::time::Duration;
 use tokio::time::sleep;
+use ndsdplayback::add_r_ffi;
 
 pub mod dsd_readers;
 pub mod players;
 pub mod semaphore;
 pub mod utils;
+
+
+
 #[tokio::main]
 async fn main() {
+
+    println!("test {}", unsafe{add_r_ffi(3, 6)});
+
     let devices = enumerate_supported_devices();
+
     devices.iter().for_each(|device| {
         eprintln!("{:?}{:?}", device.0, device.1);
     });
