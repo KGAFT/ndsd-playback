@@ -1,5 +1,6 @@
 fn main() {
-    #[cfg(dstdec)]
+    #[cfg(feature = "dstdec")]
+
     build_dst();
 }
 #[cfg(feature = "dstdec")]
