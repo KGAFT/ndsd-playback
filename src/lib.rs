@@ -3,11 +3,6 @@ pub mod dsd_readers;
 pub mod players;
 pub mod utils;
 
-unsafe extern "C" {
-    pub fn add_r_ffi(a: i32, b: i32) -> i32;
-}
-
-
 /*
 #[cfg(test)]
 mod tests{

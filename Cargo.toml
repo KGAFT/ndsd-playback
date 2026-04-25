@@ -9,9 +9,6 @@ readme = "README.md"
 categories = ["multimedia::audio"]
 keywords = ["dsd", "alsa", "native", "no-pcm-conversion", "asio"]
 
-[features]
-default = ["dst_decode"]
-dst_decode = []
 
 [lib]
 path = "src/lib.rs"
@@ -37,3 +34,4 @@ crossbeam = "0.8"
 
 [build-dependencies]
 cmake = "0.1"
+cc = "1.2.56"

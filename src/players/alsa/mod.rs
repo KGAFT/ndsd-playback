@@ -288,8 +288,8 @@ impl AlsaPlayer {
             let bytes =
                 match reader.read(&mut work_slices, alsa_buffer_size / num_channels as usize) {
                     Ok(b) => b,
-                    Err(_) => {
-                        eprintln!("read error");
+                    Err(e) => {
+                        eprintln!("read error {:?}", e);
                         return false;
                     }
                 };

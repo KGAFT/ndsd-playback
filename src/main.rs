@@ -1,8 +1,7 @@
-
+use std::ops::Index;
 use crate::players::{create_player, enumerate_supported_devices};
 use std::time::Duration;
 use tokio::time::sleep;
-use ndsdplayback::add_r_ffi;
 
 pub mod dsd_readers;
 pub mod players;
@@ -14,8 +13,6 @@ pub mod utils;
 #[tokio::main]
 async fn main() {
 
-    println!("test {}", unsafe{add_r_ffi(3, 6)});
-
     let devices = enumerate_supported_devices();
 
     devices.iter().for_each(|device| {
@@ -25,7 +22,7 @@ async fn main() {
 
     player
         .load_new_track(
-            "/mnt/hdd/Music/SACD_Michael Jackson_Bad - 1987 (Epic 28.3P-800 LP-Japan)/01. Bad.dff",
+           "/home/larry/Downloads/Miles Davis - Kind Of Blue (HDTT13879) DSD256/01-So What.dsf".into()
         )
         .await;
     player.start().await;
@@ -38,7 +35,7 @@ async fn main() {
     sleep(Duration::from_millis(3000)).await;
 
     player.load_new_track(
-        "/home/larry/Downloads/Miles Davis - Kind Of Blue (HDTT13879) DSD256/01-So What.dsf".into(),
+        "/home/larry/Desktop/sacd/RUMOURS/Stereo/07 - THE CHAIN.dff".into(),
         )
         .await;
     sleep(Duration::from_millis(15000)).await;

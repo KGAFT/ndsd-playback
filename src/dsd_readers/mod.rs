@@ -6,6 +6,7 @@ use crate::dsd_readers::dsf_reader::DSFReader;
 
 pub mod dsf_reader;
 pub mod dff_reader;
+pub mod dst_dec;
 
 #[derive(Copy, Clone, Eq, PartialEq, Default, Debug)]
 pub struct DSDFormat {
@@ -39,7 +40,8 @@ pub fn open_dsd_auto(path: &str, format: &mut DSDFormat) -> io::Result<Box<dyn D
         b"FRM8" => {
             // DFF file
             let mut reader = DFFReader::new(path)?;
-            reader.open(format)?;
+            let mut res = reader.open(format);
+            let _ = res?;
             Ok(Box::new(reader))
         }
         _ => Err(io::Error::new(
