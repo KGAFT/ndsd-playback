@@ -1,4 +1,3 @@
-#![feature(stmt_expr_attributes)]
 pub mod semaphore;
 pub mod dsd_readers;
 pub mod players;

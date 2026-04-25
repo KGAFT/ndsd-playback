@@ -1,4 +1,3 @@
-#![feature(stmt_expr_attributes)]
 use std::ops::Index;
 use crate::players::{create_player, enumerate_supported_devices};
 use std::time::Duration;

@@ -7,8 +7,8 @@ extern void log_printf(const char* text, ...) {
     std::cout << text << std::endl;
 }
 
-#include "dst_wrapper.h"
-#include "decoder/decoder.h"   // dst::decoder_t
+#include <dst_wrapper.h>
+#include <decoder/decoder.h>
 
 #include <cstring>
 #include <new>

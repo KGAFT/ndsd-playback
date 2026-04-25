@@ -7,17 +7,21 @@ project(dstdec CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Force output into the install prefix so cargo:rustc-link-search finds it
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_INSTALL_PREFIX}/lib)
 
 file(GLOB_RECURSE SRC_FILES sources/*.cpp)
 file(GLOB_RECURSE DEF_FILES sources/*.h)
+file(GLOB_RECURSE BIND_SRC_FILES binding/*.cpp)
+file(GLOB_RECURSE BIND_SDEF_FILES binding/*.h)
+
 
 message(STATUS "DST decoder sources: ${SRC_FILES}")
 
-# No hyphens in target name - some linkers choke on libdstdec-rust-ffi.a
-add_library(dstdec STATIC ${SRC_FILES} ${DEF_FILES})
-target_include_directories(dstdec PUBLIC sources/)
-target_compile_features(dstdec PUBLIC cxx_std_17)
+add_library(dstdecbackend STATIC ${SRC_FILES} ${DEF_FILES})
+target_include_directories(dstdecbackend PUBLIC sources/)
+
+add_library(dstdec STATIC ${BIND_SRC_FILES} ${BIND_DEF_FILES})
+target_include_directories(dstdec PUBLIC sources/ binding/)
+
 
 install(TARGETS dstdec DESTINATION lib)

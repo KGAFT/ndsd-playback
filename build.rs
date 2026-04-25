@@ -1,28 +1,42 @@
-use std::fs;
-
 fn main() {
     #[cfg(feature = "dstdec")]
+
     build_dst();
 }
-
 #[cfg(feature = "dstdec")]
 fn build_dst() {
-    let mut build = cc::Build::new();
+    let lib_path = cmake::build("foob_dstdec");
 
-    build.cpp(true);
-    build.flag_if_supported("-std=c++17");
-    build.flag("-Wno-incompatible-pointer-types");
-    build.include("foob_dstdec/sources");
+    let candidates = [
+        lib_path.join("lib").join("libdstdec.a"),
+        lib_path.join("build").join("libdstdec.a"),
+        lib_path.join("libdstdec.a"),
+        lib_path.join("lib").join("libdstdec.lib"),
+        lib_path.join("build").join("libdstdec.lib"),
+        lib_path.join("libdstdec.lib"),
+        lib_path.join("lib").join("dstdec.lib"),
+        lib_path.join("build").join("dstdec.lib"),
+        lib_path.join("dstdec.lib"),
+        lib_path.join("lib").join("dstdec.a"),
+        lib_path.join("build").join("dstdec.a"),
+        lib_path.join("dstdec.a"),
+    ];
 
-    let mut files = Vec::new();
-    collect_cpp_files("foob_dstdec/sources", &mut files);
+    let lib_file = candidates
+        .iter()
+        .find(|p| p.exists())
+        .unwrap_or_else(|| {
+            panic!(
+                "Could not find libdstdec. Searched:\n{}",
+                candidates.iter()
+                    .map(|p| format!("  {}", p.display()))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            )
+        });
 
-    for file in &files {
-        build.file(file);
-        println!("cargo:rerun-if-changed={}", file);
-    }
-
-    build.compile("dstdec");
+    // Pass .a as direct linker arg to avoid -Bstatic/-Bdynamic ordering issues
+    println!("cargo:rustc-link-arg={}", lib_file.display());
 
     // Cross-platform C++ runtime linking
     if cfg!(target_env = "msvc") {
@@ -34,20 +48,9 @@ fn build_dst() {
         println!("cargo:rustc-link-arg=-lstdc++");
         println!("cargo:rustc-link-arg=-lgcc_eh");
     }
-}
 
-// Simple recursive file collector
-#[cfg(feature = "dstdec")]
-fn collect_cpp_files(dir: &str, out: &mut Vec<String>) {
-    for entry in fs::read_dir(dir).unwrap() {
-        let path = entry.unwrap().path();
-
-        if path.is_dir() {
-            collect_cpp_files(path.to_str().unwrap(), out);
-        } else if let Some(ext) = path.extension() {
-            if ext == "cpp" {
-                out.push(path.to_str().unwrap().to_string());
-            }
-        }
-    }
+    println!("cargo:rerun-if-changed=dstdec/sources/dst_wrapper.cpp");
+    println!("cargo:rerun-if-changed=dstdec/sources/dst_wrapper.h");
+    println!("cargo:rerun-if-changed=dstdec/CMakeLists.txt");
+    println!("cargo:rerun-if-changed=build.rs");
 }
