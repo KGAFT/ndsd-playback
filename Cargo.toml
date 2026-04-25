@@ -35,6 +35,5 @@ ndsd-asio-sys="0.2"
 alsa-sys = "0.2"
 crossbeam = "0.8"
 
-[build-dependencies]
-cmake = "0.1"
+[target.'cfg(feature = "dstdec")'.build-dependencies]
 cc = "1.2.56"
