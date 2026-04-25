@@ -1,7 +1,8 @@
 fn main() {
+    #[cfg(dstdec)]
     build_dst();
 }
-
+#[cfg(feature = "dstdec")]
 fn build_dst() {
     let lib_path = cmake::build("foob_dstdec");
 

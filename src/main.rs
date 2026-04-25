@@ -1,3 +1,4 @@
+#![feature(stmt_expr_attributes)]
 use std::ops::Index;
 use crate::players::{create_player, enumerate_supported_devices};
 use std::time::Duration;
@@ -22,7 +23,7 @@ async fn main() {
 
     player
         .load_new_track(
-           "/home/larry/Downloads/Miles Davis - Kind Of Blue (HDTT13879) DSD256/01-So What.dsf".into()
+           "/mnt/hdd/Music/Alphaville - Forever Young (Remastered) (1984_2019) [LP] DSD128/Alphaville - Forever Young (Remastered) (1984_2019) [LP] DSD128.dff".into()
         )
         .await;
     player.start().await;

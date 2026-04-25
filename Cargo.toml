@@ -9,6 +9,9 @@ readme = "README.md"
 categories = ["multimedia::audio"]
 keywords = ["dsd", "alsa", "native", "no-pcm-conversion", "asio"]
 
+[features]
+dstdec = []
+
 
 [lib]
 path = "src/lib.rs"

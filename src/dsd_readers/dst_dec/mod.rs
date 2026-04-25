@@ -1,13 +1,9 @@
-//! DST frame decoder — Rust wrapper around the C++ reference implementation.
-//!
-//! Public API is identical to the pure-Rust version so nothing else in the
-//! codebase needs to change.  The C++ decoder is compiled by `build.rs` and
-//! linked as a static library.
+
 
 use std::ffi::c_void;
 use std::ptr::NonNull;
 
-/// Decoder errors.
+#[cfg(feature = "dstdec")]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DecodeError {
     /// Attempted to read beyond the end of the provided DST frame.
@@ -21,15 +17,12 @@ pub enum DecodeError {
     NativeError(i32),
 }
 
-// ---------------------------------------------------------------------------
-// Raw FFI declarations — must match dst_wrapper.h exactly
-// ---------------------------------------------------------------------------
-
+#[cfg(feature = "dstdec")]
 #[repr(C)]
 struct DstDecoderOpaque {
     _private: [u8; 0],
 }
-
+#[cfg(feature = "dstdec")]
 unsafe extern "C" {
     fn dst_decoder_new(
         channels: u32,
@@ -47,27 +40,17 @@ unsafe extern "C" {
     ) -> i32;
 }
 
-// ---------------------------------------------------------------------------
-// Safe wrapper
-// ---------------------------------------------------------------------------
 
-/// Safe, reusable DST frame decoder backed by the C++ reference implementation.
 pub struct Decoder {
     ptr: NonNull<c_void>,
     channels: usize,
     channel_frame_size: usize,
 }
 
-// The C++ decoder_t has mutable internal state and is not thread-safe.
-// We implement both Send and Sync here because:
-//   - Send: safe to move to another thread (we own the pointer exclusively).
-//   - Sync: the compiler rejects NonNull<T> for Sync by default; we assert
-//     it is safe because all access goes through &mut self methods, so the
-//     borrow checker already prevents concurrent mutable access at compile time.
 unsafe impl Send for Decoder {}
 unsafe impl Sync for Decoder {}
 
-impl Decoder {
+impl Decoder {#[cfg(feature = "dstdec")]
     /// Create a decoder for `channels` channels and `channel_frame_size`
     /// decoded DSD bytes per channel per frame.
     ///
@@ -80,7 +63,13 @@ impl Decoder {
             .expect("dst_decoder_new returned NULL (OOM or invalid params)");
         Self { ptr, channels, channel_frame_size }
     }
+    #[cfg(not(feature = "dstdec"))]
+    pub fn new(channels: usize, channel_frame_size: usize) -> Self {
+        panic!("This installation does not supports the dst decoding")
+    }
 
+
+    #[cfg(feature = "dstdec")]
     /// Decode a single DST frame.
     ///
     /// - `dst_data`:  raw DSTF chunk payload (compressed bytes).
@@ -110,7 +99,7 @@ impl Decoder {
             n  => Err(DecodeError::NativeError(n)),
         }
     }
-
+    #[cfg(feature = "dstdec")]
     /// Convenience: decode into a freshly allocated `Vec<u8>`.
     pub fn decode_frame_vec(
         &mut self,
@@ -122,7 +111,7 @@ impl Decoder {
         Ok(out)
     }
 }
-
+#[cfg(feature = "dstdec")]
 impl Drop for Decoder {
     fn drop(&mut self) {
         unsafe { dst_decoder_free(self.ptr.as_ptr()) }

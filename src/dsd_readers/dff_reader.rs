@@ -92,14 +92,7 @@ impl DFFReader {
         self.file.read_u64::<BigEndian>()
     }
 
-    // Decode one DST frame already loaded into dst_frame_buf into self.buf.
-    //
-    // decode_frame's second argument is the number of *compressed input* bits
-    // (i.e. how many valid bits are in dst_data).  The decoder already knows
-    // the decoded output size from Decoder::new(channels, channel_frame_size).
-    // Passing decoded_size * 8 here made calc_nr_of_bytes = decoded_size inside
-    // the decoder, which is always larger than the actual compressed payload →
-    // the dst_data.len() < bytes check fired immediately → ReadPastEnd.
+    #[cfg(feature = "dstdec")]
     fn decode_dst_frame(&mut self, compressed_len: usize) -> io::Result<()> {
         let compressed_bits = compressed_len * 8;
 
@@ -115,6 +108,11 @@ impl DFFReader {
                     format!("DST decode error: {:?}", e),
                 )
             })
+    }
+
+    #[cfg(not(feature = "dstdec"))]
+    fn decode_dst_frame(&mut self, compressed_len: usize) -> io::Result<()> {
+        panic!("This installation does not support decoding the dst frames, please enable it from the features firstly")
     }
 }
 
@@ -336,9 +334,11 @@ impl DSDReader for DFFReader {
                         io::Error::new(io::ErrorKind::InvalidData, "invalid DST frame size")
                     })?;
                 self.dst_channel_frame_size = channel_frame_size;
-
-                self.dst_decoder =
-                    Some(dst_dec::Decoder::new(self.ch, self.dst_channel_frame_size));
+                self.dst_decoder = if cfg!(feature = "dstdec") {
+                    Some(dst_dec::Decoder::new(self.ch, self.dst_channel_frame_size))
+                } else {
+                    None
+                };
 
                 // total_frames is in bytes-per-channel units (same unit as read_frames increments).
                 // = frame_count * decoded_bytes_per_channel_per_DST_frame
@@ -466,7 +466,6 @@ impl DSDReader for DFFReader {
                                 self.file.seek(SeekFrom::Current(1))?;
                             }
 
-                            // FIX: pass decoded output bits, not compressed input bits
                             self.decode_dst_frame(frame_len)?;
 
                             self.filled_frames = self.dst_channel_frame_size;
