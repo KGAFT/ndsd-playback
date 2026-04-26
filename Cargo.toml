@@ -11,7 +11,7 @@ keywords = ["dsd", "alsa", "native", "no-pcm-conversion", "asio"]
 
 [features]
 dstdec = []
-
+default = ["dstdec"]
 
 [lib]
 path = "src/lib.rs"
@@ -39,3 +39,6 @@ crossbeam = "0.8"
 [build-dependencies]
 cmake = "0.1.58"
 cc = "1.2.56"
+walkdir = "2"
+bindgen = "0.72.1"
+parse_cfg = "4"

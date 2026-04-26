@@ -15,34 +15,33 @@
 using std::array;
 using std::vector;
 
-namespace dst {
 
 	static auto BITMASK = [](auto data, auto bitnr) {
 		return (uint8_t)(((data) >> (bitnr)) & 1);
 	};
 
 template<ct_e ct_type>
-class ct_enc_t {
+class dst_ct_enc_t {
 protected:
-	static constexpr int ct_size = (ct_type == ct_e::Filter) ? MAXPREDORDER : AC_HISMAX;
+	static constexpr int ct_size = (ct_type == ct_e::Filter) ? DST_MAXPREDORDER : DST_AC_HISMAX;
 	static constexpr int ct_bits = (ct_type == ct_e::Filter) ? MAXFILTERBITS : MAXPTABLEBITS;
-	static constexpr int SizeCodedTableLen = (ct_type == ct_e::Filter) ? SIZE_CODEDPREDORDER : SIZE_CODEDPTABLELEN;
-	static constexpr int EntryLen = (ct_type == ct_e::Filter) ? SIZE_PREDCOEF : AC_BITS - 1;
-	static constexpr int MaxRiceM = (ct_type == ct_e::Filter) ? MAX_RICE_M_F : MAX_RICE_M_P;
+	static constexpr int SizeCodedTableLen = (ct_type == ct_e::Filter) ? DST_SIZE_CODEDPREDORDER : DST_SIZE_CODEDPTABLELEN;
+	static constexpr int EntryLen = (ct_type == ct_e::Filter) ? DST_SIZE_PREDCOEF : DST_AC_BITS - 1;
+	static constexpr int MaxRiceM = (ct_type == ct_e::Filter) ? DST_MAX_RICE_M_F : DST_MAX_RICE_M_P;
 	typedef array<int, ct_size> ct_table_t;
 	typedef vector<ct_table_t> ct_tables_t;
 public:
 	int NrOfTables;                                 // Number of coded tables
 	int StreamBits;                                 // Number of bits all filters use in the stream
-	int CPredOrder[NROFFRICEMETHODS];               // Code_PredOrder[Method]
-	int CPredCoef[NROFPRICEMETHODS][MAXCPREDORDER]; // Code_PredCoef[Method][CoefNr]
+	int CPredOrder[DST_NROFFRICEMETHODS];               // Code_PredOrder[Method]
+	int CPredCoef[DST_NROFPRICEMETHODS][DST_MAXCPREDORDER]; // Code_PredCoef[Method][CoefNr]
 	vector<bool> Coded;                             // DST encode coefs/entries of Fir/PtabNr
 	vector<int> BestMethod;                         // BestMethod[Fir/PtabNr]
-	vector<array<int, NROFFRICEMETHODS>> m;         // m[Fir/PtabNr][Method]
+	vector<array<int, DST_NROFFRICEMETHODS>> m;         // m[Fir/PtabNr][Method]
 	vector<int> DataLenData;                        // Fir/PtabDataLength[Fir/PtabNr]
 	vector<array<int, ct_size>> data;               // Fir/PtabData[FirNr][Index]
 public:
-	ct_enc_t() {
+	dst_ct_enc_t() {
 		if constexpr(ct_type == ct_e::Filter) {
 			CPredOrder[0] = 1;
 			CPredCoef[0][0] = -8;
@@ -120,11 +119,11 @@ public:
 		int PlainLen = EntryLen * TableSize;
 		int RiceBestMethod = -1;
 		int TableBestLen = PlainLen;
-		for (int RiceMethod = 0; RiceMethod < NROFFRICEMETHODS; RiceMethod++) {
+		for (int RiceMethod = 0; RiceMethod < DST_NROFFRICEMETHODS; RiceMethod++) {
 			int RiceBestM = -1;
 			int RiceBestMLen = -1;
 			for (int RiceM = 0; RiceM <= MaxRiceM; RiceM++) {
-				int RiceLen = SIZE_RICEMETHOD + EntryLen * CPredOrder[RiceMethod] + SIZE_RICEM;
+				int RiceLen = DST_SIZE_RICEMETHOD + EntryLen * CPredOrder[RiceMethod] + DST_SIZE_RICEM;
 				for (int EntryNr = CPredOrder[RiceMethod]; EntryNr < TableSize; EntryNr++) {
 					int x = 0;
 					int c = (ct_type == ct_e::Filter) ? TableData[EntryNr] : TableData[EntryNr] - 1;
@@ -177,11 +176,11 @@ public:
 		}
 		else {
 			auto TableBestMethod = BestMethod[TableNr];
-			AddBitsToStream(EncodedData, SIZE_RICEMETHOD, TableBestMethod, BitNr);
+			AddBitsToStream(EncodedData, DST_SIZE_RICEMETHOD, TableBestMethod, BitNr);
 			for (int CoefNr = 0; CoefNr < CPredOrder[TableBestMethod]; CoefNr++) {
 				AddBitsToStream(EncodedData, EntryLen, (ct_type == ct_e::Filter) ? TableData[CoefNr] : TableData[CoefNr] - 1, BitNr);
 			}
-			AddBitsToStream(EncodedData, SIZE_RICEM, m[TableNr][TableBestMethod], BitNr);
+			AddBitsToStream(EncodedData, DST_SIZE_RICEM, m[TableNr][TableBestMethod], BitNr);
 			for (int EntryNr = CPredOrder[TableBestMethod]; EntryNr < TableSize; EntryNr++) {
 				int x = 0;
 				int c = (ct_type == ct_e::Filter) ? TableData[EntryNr] : TableData[EntryNr] - 1;
@@ -222,9 +221,8 @@ public:
 	}
 };
 
-typedef ct_enc_t<ct_e::Filter> ft_enc_t;
-typedef ct_enc_t<ct_e::Ptable> pt_enc_t;
+typedef dst_ct_enc_t<ct_e::Filter> ft_enc_t;
+typedef dst_ct_enc_t<ct_e::Ptable> pt_enc_t;
 
-}
 
 #endif

@@ -17,17 +17,40 @@
 * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
 */
 
-#pragma once
+#include "dst_decoder.h"
+#include "decoder.h"
+#include "dst_engine.h"
 
-#include <vector>
-
-class dst_decoder_t final {
-	class ctx_t;
-	ctx_t* ctx;
-public:
-	dst_decoder_t();
-	~dst_decoder_t();
-	int init(unsigned int channels, unsigned int channel_frame_size);
-	int run(std::vector<unsigned char>& dsx_data);
-	void flush();
+class dst_decoder_t::ctx_t : public dst_engine_t<dst_Decoder_t, model_e::MT> {
 };
+
+dst_decoder_t::dst_decoder_t() : ctx(nullptr) {
+}
+
+dst_decoder_t::~dst_decoder_t() {
+    delete ctx;
+}
+
+int dst_decoder_t::init(unsigned int channels, unsigned int channel_frame_size) {
+    if (!ctx) {
+        ctx = new ctx_t();
+    }
+    if (!ctx) {
+        return -1;
+    }
+    return ctx->init(channels, channel_frame_size);
+}
+
+int dst_decoder_t::run(std::vector<unsigned char> &dsx_data) {
+    if (!ctx) {
+        return 0;
+    }
+    return ctx->run(dsx_data);
+}
+
+void dst_decoder_t::flush() {
+    if (!ctx) {
+        return;
+    }
+    return ctx->flush();
+}

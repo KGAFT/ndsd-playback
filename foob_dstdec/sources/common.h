@@ -10,7 +10,7 @@
 
 void log_printf(const char* fmt, ...);
 
-namespace dst {
+
 
 static auto GET_BIT = [](auto base, auto index) {
 	return (((unsigned char*)base)[index >> 3] >> (7 - (index & 7))) & 1;
@@ -20,6 +20,5 @@ static auto GET_NIBBLE = [](auto base, auto index) {
 	return (((unsigned char*)base)[index >> 1] >> ((index & 1) << 2)) & 0x0f;
 };
 
-}
 
 #endif

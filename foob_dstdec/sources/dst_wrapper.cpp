@@ -8,7 +8,7 @@ extern void log_printf(const char* text, ...) {
 }
 
 #include <dst_wrapper.h>
-#include <decoder/decoder.h>
+#include <decoder.h>
 
 #include <cstring>
 #include <new>
@@ -16,14 +16,14 @@ extern void log_printf(const char* text, ...) {
 // The C++ decoder_t needs to know channels and channel_frame_size at
 // construction time (via init()), so we bundle both together.
 struct DstDecoder {
-    dst::decoder_t  dec;
+    dst_Decoder_t  dec;
     unsigned int    channels;
     unsigned int    channel_frame_size;
 };
 
 extern "C" {
 
-void* dst_decoder_new(uint32_t channels, uint32_t channel_frame_size) {
+void* dst_decoder_new(uint32_t channels, uint32_t channel_frame_size){
     DstDecoder* h = new (std::nothrow) DstDecoder();
     if (!h) return nullptr;
     h->channels           = channels;
@@ -43,7 +43,7 @@ void dst_decoder_free(void* d) {
     }
 }
 
-int dst_decoder_decode(void* d,
+int dst_decoder_decode(void*    d,
                        const uint8_t* dst_data,
                        size_t         dst_data_len,
                        uint8_t*       out_dsd,

@@ -12,9 +12,8 @@
 #include "ct.h"
 #include "stream.h"
 
-namespace dst {
 
-class fr_t : public stream_t, public fh_t {
+class dst_fr_t : public dst_stream_t, public dst_fh_t {
 public:
 
 	// Calculate the log2 of an integer and round the result up by using integer arithmetic
@@ -61,7 +60,7 @@ public:
 	}
 
 	// Read segmentation for Filters and Ptables (Table 10.5)
-	void read_table_segmentation(unsigned int MaxNrOfSegments, unsigned int MinSegmentLength, segment_t& Segment, bool& SameSegmentForAllChannels) {
+	void read_table_segmentation(unsigned int MaxNrOfSegments, unsigned int MinSegmentLength, dst_segment_t& Segment, bool& SameSegmentForAllChannels) {
 		bool ResolutionRead = false;
 		unsigned int ChNr = 0;
 		unsigned int DefinedBits = 0;
@@ -154,7 +153,7 @@ public:
 		PSameSegAllCh = true;
 		for (auto ChNr = 0u; ChNr < NrOfChannels; ChNr++) {
 			PSegment.NrOfSegments[ChNr] = FSegment.NrOfSegments[ChNr];
-			if (PSegment.NrOfSegments[ChNr] > MAXNROF_PSEGS) {
+			if (PSegment.NrOfSegments[ChNr] > DST_MAXNROF_PSEGS) {
 				log_printf("ERROR: Too many segments");
 				return;
 			}
@@ -163,7 +162,7 @@ public:
 			}
 			for (auto SegmentNr = 0u; SegmentNr < FSegment.NrOfSegments[ChNr]; SegmentNr++) {
 				PSegment.SegmentLength[ChNr][SegmentNr] = FSegment.SegmentLength[ChNr][SegmentNr];
-				if ((PSegment.SegmentLength[ChNr][SegmentNr] != 0) && (PSegment.Resolution * 8 * PSegment.SegmentLength[ChNr][SegmentNr] < MIN_PSEG_LEN)) {
+				if ((PSegment.SegmentLength[ChNr][SegmentNr] != 0) && (PSegment.Resolution * 8 * PSegment.SegmentLength[ChNr][SegmentNr] < DST_MIN_PSEG_LEN)) {
 					log_printf("ERROR: Invalid segment length");
 					return;
 				}
@@ -177,17 +176,17 @@ public:
 	// Read segmentation for Filters and Ptables (Table 10.5)
 	void read_segmentation() {
 		PSameSegAsF = get_bit(); // Read Same_Segmentation (Table 10.5)
-		read_table_segmentation(MAXNROF_FSEGS, MIN_FSEG_LEN, FSegment, FSameSegAllCh);
+		read_table_segmentation(DST_MAXNROF_FSEGS, DST_MIN_FSEG_LEN, FSegment, FSameSegAllCh);
 		if (PSameSegAsF) {
 			copy_table_segmentation();
 		}
 		else {
-			read_table_segmentation(MAXNROF_PSEGS, MIN_PSEG_LEN, PSegment, PSameSegAllCh);
+			read_table_segmentation(DST_MAXNROF_PSEGS, DST_MIN_PSEG_LEN, PSegment, PSameSegAllCh);
 		}
 	}
 
 	// Read mapping for Filters or Ptables (Table 10.8)
-	void read_table_mapping(unsigned int MaxNrOfTables, segment_t& S, unsigned int& NrOfTables, bool& SameMapAllCh) {
+	void read_table_mapping(unsigned int MaxNrOfTables, dst_segment_t& S, unsigned int& NrOfTables, bool& SameMapAllCh) {
 		unsigned int CountTables = 1;
 		unsigned int NrOfBits = 1;
 		S.Table4Segment[0][0] = 0;
@@ -285,26 +284,26 @@ public:
 	void read_filter_coef_sets(ft_t& CF) {
 		// Read the filter parameters
 		for (auto FilterNr = 0u; FilterNr < NrOfFilters; FilterNr++) {
-			PredOrder[FilterNr] = get_uint(SIZE_CODEDPREDORDER); // Read Coded_Pred_Order (Table 10.13)
+			PredOrder[FilterNr] = get_uint(DST_SIZE_CODEDPREDORDER); // Read Coded_Pred_Order (Table 10.13)
 			PredOrder[FilterNr]++;
 			CF.Coded[FilterNr] = get_bit(); // Read Coded_Filter_Coef_Set (Table 10.13)
 			if (!CF.Coded[FilterNr]) {
 				CF.BestMethod[FilterNr] = (unsigned int)-1;
 				for (auto CoefNr = 0u; CoefNr < PredOrder[FilterNr]; CoefNr++) {
-					ICoefA[FilterNr][CoefNr] = (int16_t)get_sint(SIZE_PREDCOEF); // Read Coef (Table 10.13)
+					ICoefA[FilterNr][CoefNr] = (int16_t)get_sint(DST_SIZE_PREDCOEF); // Read Coef (Table 10.13)
 				}
 			}
 			else {
-				CF.BestMethod[FilterNr] = get_uint(SIZE_RICEMETHOD); // Read CC_Method (Table 10.13)
+				CF.BestMethod[FilterNr] = get_uint(DST_SIZE_RICEMETHOD); // Read CC_Method (Table 10.13)
 				auto bestmethod = CF.BestMethod[FilterNr];
 				if (CF.CPredOrder[bestmethod] >= PredOrder[FilterNr]) {
 					log_printf("ERROR: Invalid coefficient coding method");
 					return;
 				}
 				for (auto CoefNr = 0u; CoefNr < CF.CPredOrder[bestmethod]; CoefNr++) {
-					ICoefA[FilterNr][CoefNr] = (int16_t)get_sint(SIZE_PREDCOEF); // Read Coef (Table 10.13)
+					ICoefA[FilterNr][CoefNr] = (int16_t)get_sint(DST_SIZE_PREDCOEF); // Read Coef (Table 10.13)
 				}
-				CF.m[FilterNr][bestmethod] = get_uint(SIZE_RICEM); // Read CCM (Table 10.13)
+				CF.m[FilterNr][bestmethod] = get_uint(DST_SIZE_RICEM); // Read CCM (Table 10.13)
 				for (auto CoefNr = CF.CPredOrder[bestmethod]; CoefNr < PredOrder[FilterNr]; CoefNr++) {
 					int x = 0;
 					int c;
@@ -317,7 +316,7 @@ public:
 					else {
 						c = rice_decode(CF.m[FilterNr][bestmethod]) + (-x + 3) / 8;
 					}
-					if ((c < -(1 << (SIZE_PREDCOEF - 1))) || (c >= (1 << (SIZE_PREDCOEF - 1)))) {
+					if ((c < -(1 << (DST_SIZE_PREDCOEF - 1))) || (c >= (1 << (DST_SIZE_PREDCOEF - 1)))) {
 						log_printf("ERROR: filter coefficient out of range");
 						return;
 					}
@@ -335,32 +334,32 @@ public:
 	// Read Ptable data from the DST stream (Table 10.14):
 	// - which channel uses which Ptable
 	// - for each Ptable all entries
-	void read_probability_tables(pt_t& CP, vector<array<unsigned int, AC_HISMAX>>& P_one) {
+	void read_probability_tables(pt_t& CP, vector<array<unsigned int, DST_AC_HISMAX>>& P_one) {
 		// Read the data of probability tables (table entries)
 		for (auto PtableNr = 0u; PtableNr < NrOfPtables; PtableNr++) {
-			PtableLen[PtableNr] = get_uint(AC_HISBITS); // Read Coded_Ptable_Len (Table 10.14)
+			PtableLen[PtableNr] = get_uint(DST_AC_HISBITS); // Read Coded_Ptable_Len (Table 10.14)
 			PtableLen[PtableNr]++;
 			if (PtableLen[PtableNr] > 1) {
 				CP.Coded[PtableNr] = get_bit(); // Read Coded_Ptable (Table 10.14)
 				if (!CP.Coded[PtableNr]) {
 					CP.BestMethod[PtableNr] = (unsigned int)-1;
 					for (auto EntryNr = 0u; EntryNr < PtableLen[PtableNr]; EntryNr++) {
-						P_one[PtableNr][EntryNr] = get_uint(AC_BITS - 1); // Read Coded_P_one (Table 10.14)
+						P_one[PtableNr][EntryNr] = get_uint(DST_AC_BITS - 1); // Read Coded_P_one (Table 10.14)
 						P_one[PtableNr][EntryNr]++;
 					}
 				}
 				else {
-					CP.BestMethod[PtableNr] = get_uint(SIZE_RICEMETHOD); // Read PC_Method (Table 10.14)
+					CP.BestMethod[PtableNr] = get_uint(DST_SIZE_RICEMETHOD); // Read PC_Method (Table 10.14)
 					auto bestmethod = CP.BestMethod[PtableNr];
 					if (CP.CPredOrder[bestmethod] >= PtableLen[PtableNr]) {
 						log_printf("ERROR: Invalid Ptable coding method");
 						return;
 					}
 					for (auto EntryNr = 0u; EntryNr < CP.CPredOrder[bestmethod]; EntryNr++) {
-						P_one[PtableNr][EntryNr] = get_uint(AC_BITS - 1); // Read Coded_P_one (Table 10.14)
+						P_one[PtableNr][EntryNr] = get_uint(DST_AC_BITS - 1); // Read Coded_P_one (Table 10.14)
 						P_one[PtableNr][EntryNr]++;
 					}
-					CP.m[PtableNr][bestmethod] = get_uint(SIZE_RICEM); // Read PCM (Table 10.14)
+					CP.m[PtableNr][bestmethod] = get_uint(DST_SIZE_RICEM); // Read PCM (Table 10.14)
 					for (auto EntryNr = CP.CPredOrder[bestmethod]; EntryNr < PtableLen[PtableNr]; EntryNr++) {
 						int x = 0;
 						int c;
@@ -373,7 +372,7 @@ public:
 						else {
 							c = rice_decode(CP.m[PtableNr][bestmethod]) + (-x + 3) / 8;
 						}
-						if ((c < 1) || (c > (1 << (AC_BITS - 1)))) {
+						if ((c < 1) || (c > (1 << (DST_AC_BITS - 1)))) {
 							log_printf("ERROR: Ptable entry out of range");
 							return;
 						}
@@ -410,8 +409,6 @@ public:
 	}
 
 };
-
-}
 
 #endif
 

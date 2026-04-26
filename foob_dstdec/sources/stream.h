@@ -13,14 +13,13 @@
 
 using std::min;
 
-namespace dst {
 
-class stream_t {
+class dst_stream_t {
 	const uint8_t* m_data;
 	unsigned int   m_size;
 	unsigned int   m_offset;
 public:
-	stream_t() {
+	dst_stream_t() {
 		m_data = nullptr;
 		m_size = 0;
 		m_offset = 0;
@@ -73,6 +72,5 @@ public:
 
 };
 
-}
 
 #endif

@@ -9,9 +9,8 @@
 #include <stdint.h>
 #include "common.h"
 
-namespace dst {
 
-constexpr int PBITS = AC_BITS;       // number of bits for Probabilities
+constexpr int PBITS = DST_AC_BITS;       // number of bits for Probabilities
 constexpr int NBITS = 4;             // number of overhead bits: must be at least 2!
                                      // maximum "variable shift length" is (NBITS-1)
 constexpr int PSUM  = 1 << PBITS;
@@ -20,7 +19,7 @@ constexpr int MB    = 0;             // if (MB) print max buffer use
 constexpr int ONE   = 1 << ABITS;
 constexpr int HALF  = 1 << (ABITS - 1);
 
-class ac_t {
+class dst_ac_t {
 	unsigned int Init;
 	unsigned int C;
 	unsigned int A;
@@ -29,7 +28,7 @@ public:
 
 	unsigned int getPtableIndex(int PredicVal, int PtableLen) {
 		int j;
-		j = (PredicVal > 0 ? PredicVal : -PredicVal) >> AC_QSTEP;
+		j = (PredicVal > 0 ? PredicVal : -PredicVal) >> DST_AC_QSTEP;
 		if (j >= PtableLen) {
 			j = PtableLen - 1;
 		}
@@ -147,6 +146,5 @@ public:
 
 };
 
-}
 
 #endif

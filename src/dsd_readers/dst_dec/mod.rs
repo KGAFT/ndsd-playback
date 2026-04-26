@@ -16,30 +16,15 @@ pub enum DecodeError {
     /// The C++ decoder returned an unexpected error code.
     NativeError(i32),
 }
+#[cfg(feature = "dstdec")]
+
+include!(concat!(env!("OUT_DIR"), "/dst_bindings.rs"));
 
 #[cfg(feature = "dstdec")]
 #[repr(C)]
 struct DstDecoderOpaque {
     _private: [u8; 0],
 }
-#[cfg(feature = "dstdec")]
-unsafe extern "C" {
-    fn dst_decoder_new(
-        channels: u32,
-        channel_frame_size: u32,
-    ) -> *mut c_void;
-
-    fn dst_decoder_free(dec: *mut c_void);
-
-    fn dst_decoder_decode(
-        dec: *mut c_void,
-        dst_data: *const u8,
-        dst_data_len: usize,
-        out_dsd: *mut u8,
-        out_dsd_len: usize,
-    ) -> i32;
-}
-
 
 pub struct Decoder {
     ptr: NonNull<c_void>,

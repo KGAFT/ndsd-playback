@@ -14,30 +14,29 @@
 using std::array;
 using std::vector;
 
-namespace dst {
 
 enum class ct_e { Filter, Ptable };
 
-constexpr int MAXFILTERBITS = MAXPREDORDER * SIZE_PREDCOEF;
-constexpr int MAXPTABLEBITS = AC_HISMAX * AC_BITS;
+constexpr int MAXFILTERBITS = DST_MAXPREDORDER * DST_SIZE_PREDCOEF;
+constexpr int MAXPTABLEBITS = DST_AC_HISMAX * DST_AC_BITS;
 
 template<ct_e ct_type>
-class ct_t {
+class dst_ct_t {
 protected:
-	static constexpr int ct_size = (ct_type == ct_e::Filter) ? MAXPREDORDER : AC_HISMAX;
+	static constexpr int ct_size = (ct_type == ct_e::Filter) ? DST_MAXPREDORDER : DST_AC_HISMAX;
 	static constexpr int ct_bits = (ct_type == ct_e::Filter) ? MAXFILTERBITS : MAXPTABLEBITS;
 public:
 	unsigned int NrOfTables;                         // Number of coded tables
 	unsigned int StreamBits;                         // Number of bits all filters use in the stream
-	unsigned int CPredOrder[NROFFRICEMETHODS];       // Code_PredOrder[Method]
-	int CPredCoef[NROFPRICEMETHODS][MAXCPREDORDER];  // Code_PredCoef[Method][CoefNr]
+	unsigned int CPredOrder[DST_NROFFRICEMETHODS];       // Code_PredOrder[Method]
+	int CPredCoef[DST_NROFPRICEMETHODS][DST_MAXCPREDORDER];  // Code_PredCoef[Method][CoefNr]
 	vector<bool> Coded;                              // DST encode coefs/entries of Fir/PtabNr
 	vector<unsigned int> BestMethod;                 // BestMethod[Fir/PtabNr]
-	vector<array<unsigned int, NROFFRICEMETHODS>> m; // m[Fir/PtabNr][Method]
+	vector<array<unsigned int, DST_NROFFRICEMETHODS>> m; // m[Fir/PtabNr][Method]
 	vector<unsigned int> DataLenData;                // Fir/PtabDataLength[Fir/PtabNr]
 	vector<array<int, ct_size>> data;                // Fir/PtabData[FirNr][Index]
 public:
-	ct_t() {
+	dst_ct_t() {
 		if constexpr(ct_type == ct_e::Filter) {
 			CPredOrder[0] = 1;
 			CPredCoef[0][0] = -8;
@@ -48,7 +47,7 @@ public:
 			CPredCoef[2][0] = -9;
 			CPredCoef[2][1] = -5;
 			CPredCoef[2][2] = 6;
-			if constexpr (NROFFRICEMETHODS == 4) {
+			if constexpr (DST_NROFFRICEMETHODS == 4) {
 				CPredOrder[3] = 1;
 				CPredCoef[3][0] = 8;
 			}
@@ -75,9 +74,8 @@ public:
 	}
 };
 
-typedef ct_t<ct_e::Filter> ft_t;
-typedef ct_t<ct_e::Ptable> pt_t;
+typedef dst_ct_t<ct_e::Filter> ft_t;
+typedef dst_ct_t<ct_e::Ptable> pt_t;
 
-}
 
 #endif

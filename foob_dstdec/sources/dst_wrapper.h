@@ -1,4 +1,5 @@
-#pragma once
+#ifndef DST_WRAPPER_H
+#define DST_WRAPPER_H
 #include <stdint.h>
 #include <stddef.h>
 
@@ -36,3 +37,4 @@ int dst_decoder_decode(void*    dec,
 
 
 }
+#endif

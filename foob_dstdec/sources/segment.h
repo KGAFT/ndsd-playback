@@ -14,14 +14,13 @@
 using std::array;
 using std::vector;
 
-namespace dst {
 
-class segment_t {
+class dst_segment_t {
 public:
 	unsigned int Resolution;                                 // Resolution for segments
-	vector<array<unsigned int, MAXNROF_SEGS>> SegmentLength; // SegmentLength[ChNr][SegmentNr]
+	vector<array<unsigned int, DST_MAXNROF_SEGS>> SegmentLength; // SegmentLength[ChNr][SegmentNr]
 	vector<unsigned int> NrOfSegments;                       // NrOfSegments[ChNr]
-	vector<array<unsigned int, MAXNROF_SEGS>> Table4Segment; // Table4Segment[ChNr][SegmentNr]
+	vector<array<unsigned int, DST_MAXNROF_SEGS>> Table4Segment; // Table4Segment[ChNr][SegmentNr]
 public:
 	void init(unsigned int channels) {
 		SegmentLength.resize(channels);
@@ -30,6 +29,5 @@ public:
 	}
 };
 
-}
 
 #endif
