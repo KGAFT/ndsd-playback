@@ -8,7 +8,6 @@ pub mod utils;
 mod tests{
     use std::time::Duration;
     use tokio::time::sleep;
-    use crate::players;
     use crate::players::{create_player, enumerate_supported_devices};
 
     #[tokio::test]

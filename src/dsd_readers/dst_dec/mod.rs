@@ -1,5 +1,5 @@
-
-
+#![allow(dead_code)]
+#![allow(unused_variables)]
 use std::ffi::c_void;
 use std::ptr::NonNull;
 
@@ -19,12 +19,6 @@ pub enum DecodeError {
 #[cfg(feature = "dstdec")]
 
 include!(concat!(env!("OUT_DIR"), "/dst_bindings.rs"));
-
-#[cfg(feature = "dstdec")]
-#[repr(C)]
-struct DstDecoderOpaque {
-    _private: [u8; 0],
-}
 
 pub struct Decoder {
     ptr: NonNull<c_void>,

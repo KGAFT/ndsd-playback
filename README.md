@@ -8,15 +8,13 @@ This library will support only dsd without pcm conversion, you will need dac wit
 
 Feature | status
 --- | --- 
-dsf/dsdiff reading | supported
+dsf/dsdiff * reading | supported
 dsd playback | supported
 metadata parsing | TODO
 
-# Honorable mention
 
-The current asio player works like shit. But works. Behavioural fix TODO.
-
-Use at your own risk
+* -- dsdiff(dff) supports decompression dst*, only in mode dst64, dst128/dst256 is unstable. Base dsd streams works without issues
+* -- dst decompressions uses parts of sacd foobar extension, builds with c++, you must enable it with features(dstdec)
 
 # What will not be supported:
 

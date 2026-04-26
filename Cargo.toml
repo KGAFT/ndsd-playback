@@ -1,6 +1,6 @@
 [package]
 name = "ndsd-playback"
-version = "0.3.1"
+version = "0.4.0"
 edition = "2024"
 description = "A lightweight library in rust for native dsd playback over compatible devices."
 license = "Apache-2.0"
@@ -11,16 +11,12 @@ keywords = ["dsd", "alsa", "native", "no-pcm-conversion", "asio"]
 
 [features]
 dstdec = []
-default = ["dstdec"]
 
 [lib]
 path = "src/lib.rs"
 name = "ndsdplayback"
 crate-type = ["rlib"]
 
-[[bin]]
-path = "src/main.rs"
-name = "testing"
 
 [dependencies]
 byteorder = "1.5"
@@ -37,7 +33,6 @@ crossbeam = "0.8"
 
 
 [build-dependencies]
-cmake = "0.1.58"
 cc = "1.2.56"
 walkdir = "2"
 bindgen = "0.72.1"

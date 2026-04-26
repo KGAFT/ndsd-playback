@@ -1,13 +1,20 @@
+#[cfg(feature = "dstdec")]
 use parse_cfg::Target;
+#[cfg(feature = "dstdec")]
 use std::env;
+
+#[cfg(feature = "dstdec")]
 use std::path::{Path, PathBuf};
+#[cfg(feature = "dstdec")]
 use std::process::Command;
+#[cfg(feature = "dstdec")]
 use walkdir::WalkDir;
 
 fn main() {
     #[cfg(feature = "dstdec")]
     build_dst();
 }
+#[cfg(feature = "dstdec")]
 
 fn is_msvc() -> bool {
     let target: Target = std::env::var("TARGET")
@@ -37,7 +44,7 @@ fn build_dst() {
     if is_msvc() {
         invoke_vcvars_if_not_set();
     }
-    let mut src_dir = PathBuf::from("foob_dstdec");
+    let src_dir = PathBuf::from("foob_dstdec");
     create_lib(src_dir.as_path());
     create_bindings(src_dir.as_path());
     println!("cargo:rustc-link-search={}", out_dir.display());
@@ -49,7 +56,7 @@ fn build_dst() {
 fn create_lib(base_dir: &Path) {
     let mut cpp_paths = Vec::new();
     let mut src_dir = base_dir.to_path_buf();
-    let mut bind_dir = base_dir.to_path_buf();
+    let bind_dir = base_dir.to_path_buf();
     src_dir.push("sources");
 
     let walk_a_dir = |dir_to_walk, paths: &mut Vec<PathBuf>| {

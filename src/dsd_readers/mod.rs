@@ -40,7 +40,7 @@ pub fn open_dsd_auto(path: &str, format: &mut DSDFormat) -> io::Result<Box<dyn D
         b"FRM8" => {
             // DFF file
             let mut reader = DFFReader::new(path)?;
-            let mut res = reader.open(format);
+            let res = reader.open(format);
             let _ = res?;
             Ok(Box::new(reader))
         }

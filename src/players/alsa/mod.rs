@@ -369,7 +369,6 @@ impl AlsaPlayer {
         unsafe {
             let pcm_const = CString::new("pcm").unwrap();
             let name_const = CString::new("NAME").unwrap();
-            let desc_const = CString::new("DESC").unwrap();
 
             let mut devices_raw: *mut *mut c_void = std::ptr::null_mut();
             let err = alsa::snd_device_name_hint(-1, pcm_const.as_ptr(), &mut devices_raw);
@@ -387,9 +386,6 @@ impl AlsaPlayer {
             let mut iter = *n;
             while !iter.is_null() {
                 let name = alsa::snd_device_name_get_hint(iter, name_const.as_ptr());
-                let desc = alsa::snd_device_name_get_hint(iter, desc_const.as_ptr());
-                let name_cstr = CStr::from_ptr(name);
-                let desc_cstr = CStr::from_ptr(desc);
                 if !name.is_null() {
                     if Self::support_dsd(name) {
                         res.push(( CStr::from_ptr(name).to_owned(),  CStr::from_ptr(name).to_owned()));
