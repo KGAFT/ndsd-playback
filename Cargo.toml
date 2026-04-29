@@ -21,7 +21,7 @@ crate-type = ["rlib"]
 [dependencies]
 
 ndsd-read = {version = "0.1"}
-tokio = { version = "1"}
+tokio = { version = "1", features = ["full"]}
 async-trait = "0.1"
 atomic_float = "1"
 
