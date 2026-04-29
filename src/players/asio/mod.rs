@@ -1,7 +1,7 @@
 
 #![cfg(target_os = "windows")]
 
-use ndsd_read::{DSDFormat, DSDReader};
+use ndsd_read::{DSDFormat, DSDReader, DSDMeta};
 use crate::players::DSDPlayer;
 use crate::semaphore::Semaphore;
 
