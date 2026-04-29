@@ -742,6 +742,10 @@ impl DSDPlayer for AsioDsdPlayer {
         res
     }
 
+    async fn get_current_file_meta(&self) -> Option<DSDMeta> {
+        self.reader.as_ref()?.get_metadata().map(|m| m.clone())
+    }
+
     async fn get_format_info(&self) -> DSDFormat {
         self.format.clone()
     }

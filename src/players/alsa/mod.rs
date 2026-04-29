@@ -25,6 +25,7 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 #[cfg(target_os = "linux")]
 use std::sync::atomic::Ordering::Relaxed;
+use ndsd_read::DSDMeta;
 #[cfg(target_os = "linux")]
 use tokio::sync::Mutex;
 #[cfg(target_os = "linux")]
@@ -64,6 +65,7 @@ pub struct AlsaPlayer {
     current_pos: Arc<AtomicF64>,
     is_playing: Arc<AtomicBool>,
     cur_format: Arc<Mutex<DSDFormat>>,
+    cur_meta: Arc<Mutex<Option<DSDMeta>>>,
 }
 #[cfg(target_os = "linux")]
 #[async_trait::async_trait]
@@ -116,6 +118,10 @@ impl DSDPlayer for AlsaPlayer {
     async fn get_format_info(&self) -> DSDFormat {
         self.cur_format.lock().await.clone()
     }
+
+    async fn get_current_file_meta(&self) -> Option<DSDMeta> {
+        self.cur_meta.lock().await.clone()
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -126,6 +132,7 @@ impl AlsaPlayer {
         let cur_pos = Arc::new(AtomicF64::new(0.));
         let is_playing = Arc::new(AtomicBool::new(false));
         let cur_format = Arc::new(Mutex::new(DSDFormat::default()));
+        let cur_meta = Arc::new(Mutex::new(None));
         Self {
             device_name: device.clone(),
             player_thread: Self::player_main(
@@ -134,11 +141,13 @@ impl AlsaPlayer {
                 cur_pos.clone(),
                 is_playing.clone(),
                 cur_format.clone(),
+                cur_meta.clone(),
             ),
             message_channel: mpsc.0,
             current_pos: cur_pos,
             is_playing,
             cur_format,
+            cur_meta,
         }
     }
 
@@ -148,6 +157,7 @@ impl AlsaPlayer {
         pos: Arc<AtomicF64>,
         is_playing: Arc<AtomicBool>,
         cur_format: Arc<Mutex<DSDFormat>>,
+        cur_meta: Arc<Mutex<Option<DSDMeta>>>,
     ) -> std::thread::JoinHandle<()> {
         std::thread::spawn(move || {
             let mut state: PlayerState = PlayerState {
@@ -166,13 +176,13 @@ impl AlsaPlayer {
                     is_playing.store(false, Relaxed);
                     *cur_format.blocking_lock() = DSDFormat::default();
                     if let Some(cmd) = channel.blocking_recv() {
-                        if !Self::process_command(cmd, &mut state, cur_format.clone()) {
+                        if !Self::process_command(cmd, &mut state, cur_format.clone(), cur_meta.clone()) {
                             break;
                         }
                     }
                 } else {
                     if let Ok(cmd) = channel.try_recv() {
-                        if !Self::process_command(cmd, &mut state, cur_format.clone()) {
+                        if !Self::process_command(cmd, &mut state, cur_format.clone(), cur_meta.clone()) {
                             break;
                         }
                     }
@@ -191,6 +201,7 @@ impl AlsaPlayer {
         command: ControlRequest,
         state: &mut PlayerState,
         cur_format: Arc<Mutex<DSDFormat>>,
+        cur_meta: Arc<Mutex<Option<DSDMeta>>>,
     ) -> bool {
         let mut setup_reload_required = false;
         match command {
@@ -202,6 +213,7 @@ impl AlsaPlayer {
                     setup_reload_required = format.is_different(&state.format);
                     state.format = format.clone();
                     *cur_format.blocking_lock() = format;
+                    *cur_meta.blocking_lock() = state.reader.as_ref().unwrap().get_metadata().map(|meta| meta.clone());
                 }
             }
             ControlRequest::Start => {

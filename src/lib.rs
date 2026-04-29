@@ -25,7 +25,14 @@ mod tests{
             )
             .await;
         player.start().await;
-        sleep(Duration::from_millis(15000)).await;
+
+
+        sleep(Duration::from_millis(1500)).await;
+
+        if let Some(meta) = player.get_current_file_meta().await{
+            meta.pretty_print()
+        }
+
         player.seek(0.9f64).await.unwrap();
         sleep(Duration::from_millis(1500)).await;
         player.pause().await;
@@ -40,7 +47,12 @@ mod tests{
         sleep(Duration::from_millis(1500)).await;
 
         player.start().await;
+
         sleep(Duration::from_millis(1000)).await;
+
+        if let Some(meta) = player.get_current_file_meta().await{
+            meta.pretty_print()
+        }
         player.seek(0.98f64).await.unwrap();
         loop {
             let pos =  player.get_pos().await;

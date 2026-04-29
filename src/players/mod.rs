@@ -1,7 +1,7 @@
 use std::ffi::CString;
 use std::io;
 use async_trait::async_trait;
-use ndsd_read::DSDFormat;
+use ndsd_read::{DSDFormat, DSDMeta};
 
 #[cfg(target_os = "windows")]
 pub mod asio;
@@ -40,4 +40,5 @@ pub trait DSDPlayer: Send + Sync{
     async fn load_new_track(&mut self, filename: &str);
     async fn seek(&mut self, percent: f64) -> Result<(), io::Error>;
     async fn get_format_info(&self) -> DSDFormat;
+    async fn get_current_file_meta(&self) -> Option<DSDMeta>;
 }
