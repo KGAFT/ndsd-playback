@@ -2,7 +2,7 @@ use byteorder::{LittleEndian, ReadBytesExt};
 use std::fs::File;
 use std::io;
 use std::io::{Read, Seek, SeekFrom};
-use crate::dsd_readers::{DSDFormat, DSDReader};
+use crate::dsd_readers::{DSDFormat, DSDMeta, DSDReader};
 
 pub struct DSFReader {
     file: File,
@@ -14,6 +14,7 @@ pub struct DSFReader {
     total_samples: u64,
     read_samples: u64,
     data_start: u64,
+    metadata: Option<DSDMeta>, // <-- added
 }
 
 impl DSFReader {
@@ -29,6 +30,7 @@ impl DSFReader {
             total_samples: 0,
             read_samples: 0,
             data_start: 0,
+            metadata: None,
         })
     }
 
@@ -43,7 +45,50 @@ impl DSFReader {
             total_samples: 0,
             read_samples: 0,
             data_start: 0,
+            metadata: None,
         }
+    }
+
+    // --- SAFE metadata reader (never fails) ---
+    fn read_id3_at(&mut self, offset: u64) {
+        let saved = match self.file.seek(SeekFrom::Current(0)) {
+            Ok(pos) => pos,
+            Err(_) => return,
+        };
+
+        if self.file.seek(SeekFrom::Start(offset)).is_err() {
+            let _ = self.file.seek(SeekFrom::Start(saved));
+            return;
+        }
+
+        let mut header = [0u8; 10];
+        if self.file.read_exact(&mut header).is_err() {
+            let _ = self.file.seek(SeekFrom::Start(saved));
+            return;
+        }
+
+        if &header[0..3] != b"ID3" {
+            let _ = self.file.seek(SeekFrom::Start(saved));
+            return;
+        }
+
+        let syncsafe_size = ((header[6] as u32) << 21)
+            | ((header[7] as u32) << 14)
+            | ((header[8] as u32) << 7)
+            | (header[9] as u32);
+
+        let total_size = 10 + syncsafe_size as usize;
+
+        let mut raw = vec![0u8; total_size];
+        raw[..10].copy_from_slice(&header);
+
+        if self.file.read_exact(&mut raw[10..]).is_ok() {
+            if let Ok(meta) = std::panic::catch_unwind(|| DSDMeta::from_id3(raw)) {
+                self.metadata = Some(meta);
+            }
+        }
+
+        let _ = self.file.seek(SeekFrom::Start(saved));
     }
 }
 
@@ -51,13 +96,15 @@ impl DSDReader for DSFReader {
     fn open(&mut self, format: &mut DSDFormat) -> io::Result<()> {
         let mut ident = [0u8; 4];
 
-        // --- DSD chunk ---
+        // --- DSD chunk (FIXED parsing) ---
         self.file.read_exact(&mut ident)?;
         if &ident != b"DSD " {
             return Err(io::Error::new(io::ErrorKind::InvalidData, "not DSF"));
         }
-        let dsd_size = self.file.read_u64::<LittleEndian>()?;
-        self.file.seek(SeekFrom::Current(dsd_size as i64 - 12))?;
+
+        let _dsd_chunk_size = self.file.read_u64::<LittleEndian>()?;
+        let _total_file_size = self.file.read_u64::<LittleEndian>()?;
+        let metadata_pointer = self.file.read_u64::<LittleEndian>()?;
 
         // --- fmt chunk ---
         self.file.read_exact(&mut ident)?;
@@ -67,6 +114,7 @@ impl DSDReader for DSFReader {
                 "fmt chunk missing",
             ));
         }
+
         let fmt_size = self.file.read_u64::<LittleEndian>()?;
         let format_version = self.file.read_u32::<LittleEndian>()?;
         if format_version != 1 {
@@ -75,6 +123,7 @@ impl DSDReader for DSFReader {
                 "unsupported format version",
             ));
         }
+
         let format_id = self.file.read_u32::<LittleEndian>()?;
         if format_id != 0 {
             return Err(io::Error::new(
@@ -82,6 +131,7 @@ impl DSDReader for DSFReader {
                 "unsupported format id",
             ));
         }
+
         let _channel_type = self.file.read_u32::<LittleEndian>()?;
         let channels = self.file.read_u32::<LittleEndian>()?;
         format.num_channels = channels;
@@ -89,18 +139,18 @@ impl DSDReader for DSFReader {
 
         let sampling_freq = self.file.read_u32::<LittleEndian>()?;
         format.sampling_rate = sampling_freq;
+
         let bits_per_sample = self.file.read_u32::<LittleEndian>()?;
         format.is_lsb_first = bits_per_sample == 1;
 
         let sample_count = self.file.read_u64::<LittleEndian>()?;
         format.total_samples = sample_count;
-        // DSF sample_count is in bits per channel; convert to bytes per channel
-        // so all internal tracking is in bytes-per-channel
         self.total_samples = sample_count / 8;
 
         let block_size = self.file.read_u32::<LittleEndian>()? as usize;
         self.blocksize = block_size;
 
+        // skip remaining fmt
         self.file.seek(SeekFrom::Current(fmt_size as i64 - 48))?;
 
         // --- data chunk ---
@@ -111,13 +161,17 @@ impl DSDReader for DSFReader {
                 "data chunk missing",
             ));
         }
+
         let _data_size = self.file.read_u64::<LittleEndian>()?;
 
-        // mark data start
         self.data_start = self.file.seek(SeekFrom::Current(0))?;
 
-        // allocate buffer
         self.buf.resize(self.blocksize * self.ch, 0);
+
+        // --- SAFE metadata handling ---
+        if metadata_pointer != 0 {
+            self.read_id3_at(metadata_pointer);
+        }
 
         Ok(())
     }
@@ -140,6 +194,7 @@ impl DSDReader for DSFReader {
 
             let available = self.filled - self.pos;
             let size = available.min(want);
+
             for i in 0..self.ch {
                 let src_offset = self.blocksize * i + self.pos;
                 let src = &self.buf[src_offset..src_offset + size];
@@ -152,7 +207,6 @@ impl DSDReader for DSFReader {
             read_bytes += size;
         }
 
-        // accumulate in bytes-per-channel, matching total_samples units
         self.read_samples = self.read_samples.saturating_add(read_bytes as u64);
         Ok(read_bytes)
     }
@@ -164,24 +218,18 @@ impl DSDReader for DSFReader {
                 "percent out of range",
             ));
         }
-        // total_samples is in bytes-per-channel, so target is too
         let target_sample = (self.total_samples as f64 * percent) as u64;
         self.seek_samples(target_sample)
     }
 
     fn seek_samples(&mut self, sample_index: u64) -> io::Result<()> {
-        // sample_index is in bytes-per-channel
-        // total file bytes to skip = sample_index * ch
         let total_bytes = sample_index * self.ch as u64;
-
-        // align down to block boundary
         let block_bytes = (self.blocksize * self.ch) as u64;
         let aligned_total_bytes = (total_bytes / block_bytes) * block_bytes;
 
         let offset = self.data_start + aligned_total_bytes;
         self.file.seek(SeekFrom::Start(offset))?;
 
-        // read_samples = aligned bytes per channel
         self.read_samples = aligned_total_bytes / self.ch as u64;
         self.pos = 0;
         self.filled = 0;
@@ -202,5 +250,9 @@ impl DSDReader for DSFReader {
 
     fn eof(&self) -> bool {
         self.read_samples >= self.total_samples
+    }
+
+    fn get_metadata(&self) -> Option<&DSDMeta> {
+        self.metadata.as_ref()
     }
 }

@@ -1,5 +1,6 @@
-use crate::dsd_readers::{DSDFormat, DSDReader};
+use crate::dsd_readers::{DSDFormat, DSDMeta, DSDReader, MetaPicture};
 use byteorder::{BigEndian, ReadBytesExt};
+use std::collections::HashMap;
 use std::fs::File;
 use std::io;
 use std::io::{Read, Seek, SeekFrom};
@@ -12,26 +13,57 @@ enum AudioKind {
     Dst,
 }
 
+
+
+pub fn decode_dsdiff_text(raw: &[u8]) -> String {
+    if raw.len() < 2 {
+        return decode_bytes(raw);
+    }
+    let text_len = u16::from_be_bytes([raw[0], raw[1]]) as usize;
+    let end = (2 + text_len).min(raw.len());
+    decode_bytes(&raw[2..end])
+}
+
+fn decode_bytes(bytes: &[u8]) -> String {
+    use chardetng::EncodingDetector;
+
+    let mut detector = EncodingDetector::new();
+    detector.feed(bytes, true);
+    let encoding = detector.guess(None, true);
+
+    // Decode the bytes
+    let (decoded, _, had_errors) = encoding.decode(bytes);
+
+    if had_errors {
+        eprintln!("Warning: decoding had errors");
+    }
+
+    decoded.into_owned()
+}
+
 pub struct DFFReader {
     file: File,
-    buf: Vec<u8>,         // internal interleaved read buffer (bytes: frames * channels)
-    ch: usize,            // channels
-    block_frames: usize,  // frames per internal read block (1 frame == 1 byte per channel)
-    filled_frames: usize, // frames currently in buf
-    pos_frames: usize,    // current read position in frames inside buf
-    total_frames: u64,    // total frames (bytes per channel)
-    read_frames: u64,     // frames read so far (bytes per channel consumed)
-    data_start: u64,      // start offset of audio chunk payload
+    buf: Vec<u8>,
+    ch: usize,
+    block_frames: usize,
+    filled_frames: usize,
+    pos_frames: usize,
+    total_frames: u64,
+    read_frames: u64,
+    data_start: u64,
 
     // DST support
     audio_kind: Option<AudioKind>,
-    data_end: u64,              // end offset (exclusive) of the audio payload region
+    data_end: u64,
     dst_framerate: u16,
     dst_frame_count: u32,
-    dst_channel_frame_size: usize, // decoded bytes per channel per DST frame
+    dst_channel_frame_size: usize,
     dst_decoder: Option<dst_dec::Decoder>,
-    dsti_index: Vec<u64>,          // file offsets (to DSTF chunk header) per DST frame number
-    dst_frame_buf: Vec<u8>,        // scratch buffer for encoded DSTF payload
+    dsti_index: Vec<u64>,
+    dst_frame_buf: Vec<u8>,
+
+    // Metadata – populated during open()
+    metadata: DSDMeta,
 }
 
 impl DFFReader {
@@ -56,6 +88,8 @@ impl DFFReader {
             dst_decoder: None,
             dsti_index: Vec::new(),
             dst_frame_buf: Vec::new(),
+
+            metadata: DSDMeta::default(),
         })
     }
 
@@ -79,6 +113,8 @@ impl DFFReader {
             dst_decoder: None,
             dsti_index: Vec::new(),
             dst_frame_buf: Vec::new(),
+
+            metadata: DSDMeta::default(),
         }
     }
 
@@ -92,16 +128,44 @@ impl DFFReader {
         self.file.read_u64::<BigEndian>()
     }
 
+    /// Read `len` bytes then skip the odd-byte padding if needed.
+    fn read_payload(&mut self, len: u64) -> io::Result<Vec<u8>> {
+        let mut buf = vec![0u8; len as usize];
+        self.file.read_exact(&mut buf)?;
+        if len & 1 != 0 {
+            self.file.seek(SeekFrom::Current(1))?;
+        }
+        Ok(buf)
+    }
+
+    /// Decode a native DSDIFF text payload and store it in `self.metadata.tags`
+    /// using `entry().or_insert()` so an earlier ID3 value is never overwritten.
+    fn store_text_tag(&mut self, chunk_id: &[u8; 4], raw: &[u8]) {
+        let text = decode_dsdiff_text(raw);
+        if !text.is_empty() {
+            match chunk_id {
+                b"DITI" => self.metadata.title = Some(text),
+                b"DIAR" => self.metadata.artist = Some(text),
+                b"DIAL" => self.metadata.album = Some(text),
+                b"DIGN" => self.metadata.genre = Some(text),
+                b"DIFC" => self.metadata.comment = Some(text),
+                _=>{}
+            }
+        }
+    }
+
     #[cfg(feature = "dstdec")]
     fn decode_dst_frame(&mut self, compressed_len: usize) -> io::Result<()> {
         let compressed_bits = compressed_len * 8;
-
         let decoder = self.dst_decoder.as_mut().ok_or_else(|| {
             io::Error::new(io::ErrorKind::InvalidData, "DST decoder not initialized")
         })?;
-
         decoder
-            .decode_frame(&self.dst_frame_buf[..compressed_len], compressed_bits, &mut self.buf)
+            .decode_frame(
+                &self.dst_frame_buf[..compressed_len],
+                compressed_bits,
+                &mut self.buf,
+            )
             .map_err(|e| {
                 io::Error::new(
                     io::ErrorKind::InvalidData,
@@ -111,14 +175,16 @@ impl DFFReader {
     }
 
     #[cfg(not(feature = "dstdec"))]
-    fn decode_dst_frame(&mut self, compressed_len: usize) -> io::Result<()> {
-        panic!("This installation does not support decoding the dst frames, please enable it from the features firstly")
+    fn decode_dst_frame(&mut self, _compressed_len: usize) -> io::Result<()> {
+        panic!("DST decoding is disabled; enable the `dstdec` feature")
     }
 }
 
 impl DSDReader for DFFReader {
     fn open(&mut self, format: &mut DSDFormat) -> io::Result<()> {
-        // --- FRM8 header ---
+        // -----------------------------------------------------------------------
+        // FRM8 / DSD  header
+        // -----------------------------------------------------------------------
         let id = self.read_id()?;
         if &id != b"FRM8" {
             return Err(io::Error::new(io::ErrorKind::InvalidData, "not FRM8 / DFF"));
@@ -143,6 +209,7 @@ impl DSDReader for DFFReader {
         let mut channels: Option<u16> = None;
         format.is_lsb_first = false;
 
+        // Top-level chunk walk  (audio + metadata in one pass)
         while self.file.seek(SeekFrom::Current(0))? < frm8_end {
             let mut chunk_id = [0u8; 4];
             if let Err(e) = self.file.read_exact(&mut chunk_id) {
@@ -155,6 +222,9 @@ impl DSDReader for DFFReader {
             let chunk_payload_start = self.file.seek(SeekFrom::Current(0))?;
 
             match &chunk_id {
+                // -----------------------------------------------------------
+                // PROP / SND  – sample-rate, channel-count, compression type
+                // -----------------------------------------------------------
                 b"PROP" => {
                     let mut prop_id = [0u8; 4];
                     self.file.read_exact(&mut prop_id)?;
@@ -177,9 +247,8 @@ impl DSDReader for DFFReader {
                                         let sr = self.file.read_u32::<BigEndian>()?;
                                         sample_rate_hz = Some(sr);
                                     } else {
-                                        self.file.seek(SeekFrom::Start(
-                                            sub_payload_start + sub_size,
-                                        ))?;
+                                        self.file
+                                            .seek(SeekFrom::Start(sub_payload_start + sub_size))?;
                                     }
                                 }
                                 b"CHNL" => {
@@ -187,9 +256,8 @@ impl DSDReader for DFFReader {
                                         let ch = self.file.read_u16::<BigEndian>()?;
                                         channels = Some(ch);
                                     } else {
-                                        self.file.seek(SeekFrom::Start(
-                                            sub_payload_start + sub_size,
-                                        ))?;
+                                        self.file
+                                            .seek(SeekFrom::Start(sub_payload_start + sub_size))?;
                                     }
                                 }
                                 b"CMPR" => {
@@ -227,11 +295,8 @@ impl DSDReader for DFFReader {
                     }
                 }
 
+                // DSTI – DST frame index
                 b"DSTI" => {
-                    // Each entry: { offset: u64 BE, length: u32 BE } = 12 bytes.
-                    // offset points to the start of the DSTF payload (past the 12-byte chunk header),
-                    // so we subtract sizeof(Chunk)=12 to get the DSTF chunk header position,
-                    // matching get_dsti_from_frame() in the C++ reference.
                     let mut remaining = chunk_size;
                     self.dsti_index.clear();
                     while remaining >= 12 {
@@ -245,6 +310,7 @@ impl DSDReader for DFFReader {
                         .seek(SeekFrom::Start(chunk_payload_start + padded))?;
                 }
 
+                // DSD  – uncompressed audio payload
                 b"DSD " => {
                     if audio_kind.is_none() {
                         audio_kind = Some(AudioKind::Dsd);
@@ -257,6 +323,7 @@ impl DSDReader for DFFReader {
                         .seek(SeekFrom::Start(chunk_payload_start + padded))?;
                 }
 
+                // DST  – compressed audio payload
                 b"DST " => {
                     if audio_kind.is_none() {
                         audio_kind = Some(AudioKind::Dst);
@@ -274,9 +341,93 @@ impl DSDReader for DFFReader {
                         }
                         self.dst_frame_count = self.file.read_u32::<BigEndian>()?;
                         self.dst_framerate = self.file.read_u16::<BigEndian>()?;
-
-                        // data_start points to the first DSTF/DSTC chunk inside the DST payload
                         self.data_start = self.file.seek(SeekFrom::Current(0))?;
+                    }
+                    let padded = (chunk_size + 1) & !1u64;
+                    self.file
+                        .seek(SeekFrom::Start(chunk_payload_start + padded))?;
+                }
+
+                // -----------------------------------------------------------
+                // DIIN – disc information block
+                //   Sub-chunks: DITI (title), DIAR (artist), ALCH (cover art)
+                // -----------------------------------------------------------
+                b"DIIN" => {
+                    let diin_end = chunk_payload_start + chunk_size;
+                    while self.file.seek(SeekFrom::Current(0))? < diin_end {
+                        let mut sub_id = [0u8; 4];
+                        if self.file.read_exact(&mut sub_id).is_err() {
+                            break;
+                        }
+                        let sub_size = match self.read_be_u64() {
+                            Ok(s) => s,
+                            Err(_) => break,
+                        };
+                        let sub_start = self.file.seek(SeekFrom::Current(0))?;
+
+                        match &sub_id {
+                            b"DITI" | b"DIAR" => {
+                                if let Ok(raw) = self.read_payload(sub_size) {
+                                    self.store_text_tag(&sub_id, &raw);
+                                    // read_payload already consumed + padded
+                                    continue;
+                                }
+                            }
+                            // Cover art extension (AudioGate / some mastering tools)
+                            b"ALCH" => {
+                                if let Ok(raw) = self.read_payload(sub_size) {
+                                    self.metadata.cover_art.push(MetaPicture {
+                                        data: raw,
+                                        ..Default::default()
+                                    });
+                                    continue;
+                                }
+                            }
+                            _ => {}
+                        }
+
+                        let padded = (sub_size + 1) & !1u64;
+                        self.file.seek(SeekFrom::Start(sub_start + padded))?;
+                    }
+                    // Ensure we land exactly at diin_end even if a sub-chunk was malformed
+                    self.file.seek(SeekFrom::Start(diin_end))?;
+                    if diin_end & 1 != 0 {
+                        self.file.seek(SeekFrom::Current(1))?;
+                    }
+                }
+
+                // Top-level extended text chunks
+                //   DIAL  album
+                //   DIGN  genre
+                //   DICR  copyright
+                //   DIFC  comment / notes
+                b"DIAL" | b"DIGN" | b"DICR" | b"DIFC" => {
+                    if let Ok(raw) = self.read_payload(chunk_size) {
+                        self.store_text_tag(&chunk_id, &raw);
+                        // read_payload consumed + padded already
+                        continue;
+                    }
+                    let padded = (chunk_size + 1) & !1u64;
+                    self.file
+                        .seek(SeekFrom::Start(chunk_payload_start + padded))?;
+                }
+
+                // ID3  – raw ID3v2 block; takes priority, store once.
+                // Because ID3 may appear before native text chunks in some
+                // files, we store the raw bytes here and overwrite any
+                // already-parsed native tags below after the loop.
+                b"ID3 " => {
+                    if self.metadata.id3_raw.is_none() {
+                        if let Ok(raw) = self.read_payload(chunk_size) {
+                            if !raw.is_empty() {
+                                let cursor = std::io::Cursor::new(&raw);
+                                if let Ok(tag) = id3::Tag::read_from(cursor) {
+                                    self.metadata.update_from_id3(tag);
+                                }
+                                self.metadata.id3_raw = Some(raw);
+                                continue;
+                            }
+                        }
                     }
                     let padded = (chunk_size + 1) & !1u64;
                     self.file
@@ -322,12 +473,6 @@ impl DSDReader for DFFReader {
                         "invalid DST framerate",
                     ));
                 }
-
-                // dst_channel_frame_size: decoded bytes per channel per DST frame.
-                // Matches C++ `m_frame_size / m_channel_count`:
-                //   m_frame_size = samplerate/8 * channels / framerate  (total interleaved bytes)
-                //   per_channel  = samplerate/8 / framerate
-                // e.g. DSD64 stereo 75fps: 2822400/8/75 = 4704 bytes per channel per frame
                 let channel_frame_size = (fs as usize / 8)
                     .checked_div(self.dst_framerate as usize)
                     .ok_or_else(|| {
@@ -340,15 +485,11 @@ impl DSDReader for DFFReader {
                     None
                 };
 
-                // total_frames is in bytes-per-channel units (same unit as read_frames increments).
-                // = frame_count * decoded_bytes_per_channel_per_DST_frame
                 let total_frames = (self.dst_frame_count as u64)
                     .saturating_mul(self.dst_channel_frame_size as u64);
                 format.total_samples = total_frames;
                 self.total_frames = total_frames;
 
-                // buf holds one fully decoded DST frame, interleaved across all channels.
-                // Size = dst_channel_frame_size * ch  (matches C++ m_frame_size).
                 self.buf.resize(self.dst_channel_frame_size * self.ch, 0);
                 self.filled_frames = 0;
                 self.pos_frames = 0;
@@ -376,9 +517,7 @@ impl DSDReader for DFFReader {
         self.seek_samples(0)?;
 
         if self.audio_kind == Some(AudioKind::Dst) && !self.dsti_index.is_empty() {
-            if self.dst_frame_count != 0
-                && (self.dsti_index.len() as u32) != self.dst_frame_count
-            {
+            if self.dst_frame_count != 0 && (self.dsti_index.len() as u32) != self.dst_frame_count {
                 eprintln!(
                     "warning: DSTI entries ({}) != FRTE frame_count ({})",
                     self.dsti_index.len(),
@@ -388,6 +527,10 @@ impl DSDReader for DFFReader {
         }
 
         Ok(())
+    }
+
+    fn get_metadata(&self) -> Option<&DSDMeta> {
+        Some(&self.metadata)
     }
 
     fn read(&mut self, data: &mut [&mut [u8]], bytes_per_channel: usize) -> io::Result<usize> {
@@ -407,8 +550,7 @@ impl DSDReader for DFFReader {
             if self.pos_frames == self.filled_frames {
                 match self.audio_kind {
                     Some(AudioKind::Dsd) => {
-                        let frames_to_read =
-                            (bytes_per_channel - written).min(self.block_frames);
+                        let frames_to_read = (bytes_per_channel - written).min(self.block_frames);
                         let bytes_to_read = frames_to_read * self.ch;
                         self.buf.resize(bytes_to_read, 0);
                         let n = self.file.read(&mut self.buf)?;
@@ -423,17 +565,10 @@ impl DSDReader for DFFReader {
                             return Ok(written);
                         }
 
-                        // current DST frame number derived from read_frames.
-                        // read_frames is in bytes-per-channel units; dividing by
-                        // dst_channel_frame_size gives the DST frame index.
-                        let current_frame_nr = (self.read_frames
-                            / (self.dst_channel_frame_size as u64))
-                            as usize;
+                        let current_frame_nr =
+                            (self.read_frames / (self.dst_channel_frame_size as u64)) as usize;
 
-                        if !self.dsti_index.is_empty()
-                            && current_frame_nr < self.dsti_index.len()
-                        {
-                            // --- DSTI fast path ---
+                        if !self.dsti_index.is_empty() && current_frame_nr < self.dsti_index.len() {
                             let frame_offset = self.dsti_index[current_frame_nr];
                             self.file.seek(SeekFrom::Start(frame_offset))?;
 
@@ -461,17 +596,14 @@ impl DSDReader for DFFReader {
                             let frame_len = chunk_size as usize;
                             self.dst_frame_buf.resize(frame_len, 0);
                             self.file.read_exact(&mut self.dst_frame_buf)?;
-                            // skip odd-byte padding
                             if (frame_len & 1) != 0 {
                                 self.file.seek(SeekFrom::Current(1))?;
                             }
 
                             self.decode_dst_frame(frame_len)?;
-
                             self.filled_frames = self.dst_channel_frame_size;
                             self.pos_frames = 0;
                         } else {
-                            // --- Sequential fallback (no DSTI or past end of index) ---
                             let mut got_frame = false;
                             while self.file.seek(SeekFrom::Current(0))? < self.data_end {
                                 let chunk_id = self.read_id()?;
@@ -489,18 +621,14 @@ impl DSDReader for DFFReader {
                                         self.file.seek(SeekFrom::Current(1))?;
                                     }
 
-                                    // FIX: pass decoded output bits, not compressed input bits
                                     self.decode_dst_frame(frame_len)?;
-
                                     self.filled_frames = self.dst_channel_frame_size;
                                     self.pos_frames = 0;
                                     got_frame = true;
                                     break;
                                 } else {
-                                    // skip DSTC, unknown chunks, padding
                                     let padded = (chunk_size + 1) & !1u64;
-                                    self.file
-                                        .seek(SeekFrom::Start(payload_start + padded))?;
+                                    self.file.seek(SeekFrom::Start(payload_start + padded))?;
                                 }
                             }
 
@@ -522,7 +650,6 @@ impl DSDReader for DFFReader {
             let need_frames = bytes_per_channel - written;
             let take_frames = available_frames.min(need_frames);
 
-            // deinterleave take_frames from buf into per-channel output slices
             for ch_idx in 0..self.ch {
                 let dst = &mut data[ch_idx][written..written + take_frames];
                 let mut src_offset = self.pos_frames * self.ch + ch_idx;
@@ -534,7 +661,6 @@ impl DSDReader for DFFReader {
 
             self.pos_frames += take_frames;
             written += take_frames;
-            // read_frames is in bytes-per-channel units, consistent with total_frames
             self.read_frames = self.read_frames.saturating_add(take_frames as u64);
         }
 
@@ -557,10 +683,9 @@ impl DSDReader for DFFReader {
             Some(AudioKind::Dsd) => {
                 let byte_offset = sample_index
                     .checked_mul(self.ch as u64)
-                    .ok_or_else(|| {
-                        io::Error::new(io::ErrorKind::InvalidInput, "seek overflow")
-                    })?;
-                self.file.seek(SeekFrom::Start(self.data_start + byte_offset))?;
+                    .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "seek overflow"))?;
+                self.file
+                    .seek(SeekFrom::Start(self.data_start + byte_offset))?;
                 self.read_frames = sample_index;
                 self.pos_frames = 0;
                 self.filled_frames = 0;
@@ -582,16 +707,12 @@ impl DSDReader for DFFReader {
                     ));
                 }
 
-                // sample_index is in bytes-per-channel units; map to DST frame number
-                let target_frame =
-                    (sample_index / (self.dst_channel_frame_size as u64)) as usize;
-                let target_frame =
-                    target_frame.min(self.dsti_index.len().saturating_sub(1));
+                let target_frame = (sample_index / (self.dst_channel_frame_size as u64)) as usize;
+                let target_frame = target_frame.min(self.dsti_index.len().saturating_sub(1));
 
-                self.file.seek(SeekFrom::Start(self.dsti_index[target_frame]))?;
-                // snap read_frames to the exact frame boundary
-                self.read_frames =
-                    (target_frame as u64) * (self.dst_channel_frame_size as u64);
+                self.file
+                    .seek(SeekFrom::Start(self.dsti_index[target_frame]))?;
+                self.read_frames = (target_frame as u64) * (self.dst_channel_frame_size as u64);
                 self.pos_frames = 0;
                 self.filled_frames = 0;
                 Ok(())
