@@ -1,7 +1,7 @@
 #[cfg(target_os = "linux")]
-use crate::dsd_readers;
+use ndsd_read;
 #[cfg(target_os = "linux")]
-use crate::dsd_readers::{DSDFormat, DSDReader};
+use ndsd_read::{DSDFormat, DSDReader};
 #[cfg(target_os = "linux")]
 use crate::players::DSDPlayer;
 #[cfg(target_os = "linux")]
@@ -196,7 +196,7 @@ impl AlsaPlayer {
         match command {
             ControlRequest::LoadTrack(path) => {
                 let mut format = DSDFormat::default();
-                if let Ok(reader) = dsd_readers::open_dsd_auto(path.to_str().unwrap(), &mut format)
+                if let Ok(reader) = ndsd_read::open_dsd_auto(path.to_str().unwrap(), &mut format)
                 {
                     state.reader = Some(reader);
                     setup_reload_required = format.is_different(&state.format);

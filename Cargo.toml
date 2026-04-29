@@ -10,8 +10,8 @@ categories = ["multimedia::audio"]
 keywords = ["dsd", "alsa", "native", "no-pcm-conversion", "asio"]
 
 [features]
-dstdec = []
-default = ['dstdec']
+dstdec = ["ndsd-read/dstdec"]
+
 [lib]
 path = "src/lib.rs"
 name = "ndsdplayback"
@@ -19,13 +19,12 @@ crate-type = ["rlib"]
 
 
 [dependencies]
-byteorder = "1.5"
-tokio = { version = "1", features = ["full"]}
+
+ndsd-read = {version = "0.1"}
+tokio = { version = "1"}
 async-trait = "0.1"
 atomic_float = "1"
-id3 = "1.16"
-chardetng = { version = "0.1" }
-encoding_rs = { version = "0.8", features = ["default"] }
+
 
 [target.'cfg(target_os = "windows")'.dependencies]
 ndsd-asio-sys="0.2"

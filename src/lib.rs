@@ -1,5 +1,4 @@
 pub mod semaphore;
-pub mod dsd_readers;
 pub mod players;
 pub mod utils;
 

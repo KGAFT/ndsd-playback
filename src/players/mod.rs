@@ -1,7 +1,7 @@
 use std::ffi::CString;
 use std::io;
 use async_trait::async_trait;
-use crate::dsd_readers::DSDFormat;
+use ndsd_read::DSDFormat;
 
 #[cfg(target_os = "windows")]
 pub mod asio;
