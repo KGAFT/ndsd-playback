@@ -1,7 +1,7 @@
 
 #![cfg(target_os = "windows")]
 
-use crate::dsd_readers::{self, DSDFormat, DSDReader};
+use ndsd_read::{DSDFormat, DSDReader};
 use crate::players::DSDPlayer;
 use crate::semaphore::Semaphore;
 
@@ -18,8 +18,7 @@ use std::ffi::{CStr, CString, c_char, c_double, c_long, c_void};
 use std::io;
 use std::ptr::null_mut;
 use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
-use std::thread::sleep;
-use std::time::Duration;
+
 // ---------------------------------------------------------------------------
 // Win32 import (avoid new deps, keep it minimal).
 // ---------------------------------------------------------------------------
@@ -502,7 +501,7 @@ impl AsioDsdPlayer {
 
     pub fn open(driver_name: CString, path: &str) -> Self {
         let mut p = Self::new(driver_name);
-        p.load_new_track(path);
+        let _ = p.load_new_track(path);
         p
     }
 
@@ -697,7 +696,7 @@ impl DSDPlayer for AsioDsdPlayer {
 
     async fn load_new_track(&mut self, filename: &str) {
         let mut format = DSDFormat::default();
-        let reader = dsd_readers::open_dsd_auto(filename, &mut format).expect("Failed to open DSD");
+        let reader = ndsd_read::open_dsd_auto(filename, &mut format).expect("Failed to open DSD");
 
         let need_full_reset = self.format.is_different(&format);
 
