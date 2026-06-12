@@ -16,10 +16,6 @@ metadata parsing | TODO
 * -- dsdiff(dff) supports decompression dst*, only in mode dst64, dst128/dst256 is unstable. Base dsd streams works without issues
 * -- dst decompressions uses parts of sacd foobar extension, builds with c++, you must enable it with features(dstdec)
 
-# What will not be supported:
-
-SACD iso images playback, due to obvious reasons.
-
 # Maybe will be supported:
 
 Android dsd playback

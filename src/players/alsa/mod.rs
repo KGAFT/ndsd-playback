@@ -1,8 +1,4 @@
 #[cfg(target_os = "linux")]
-use ndsd_read;
-#[cfg(target_os = "linux")]
-use ndsd_read::{DSDFormat, DSDReader};
-#[cfg(target_os = "linux")]
 use crate::players::DSDPlayer;
 #[cfg(target_os = "linux")]
 use crate::utils::bit_reverse_table::BIT_REVERSE_TABLE;
@@ -11,21 +7,26 @@ use alsa_sys::{SND_PCM_NONBLOCK, SND_PCM_STREAM_PLAYBACK};
 #[cfg(target_os = "linux")]
 use atomic_float::AtomicF64;
 #[cfg(target_os = "linux")]
+use ndsd_read;
+#[cfg(target_os = "linux")]
+use ndsd_read::{DSDFormat, DSDReader};
+#[cfg(target_os = "linux")]
 use std::ffi::{CStr, CString, c_char, c_void};
 #[cfg(target_os = "linux")]
 use std::io::{Error, ErrorKind};
 #[cfg(target_os = "linux")]
 use std::path::PathBuf;
 
+use ndsd_read::DSDMeta;
 #[cfg(target_os = "linux")]
 use std::ptr;
 #[cfg(target_os = "linux")]
 use std::sync::Arc;
+use std::sync::RwLock;
 #[cfg(target_os = "linux")]
 use std::sync::atomic::AtomicBool;
 #[cfg(target_os = "linux")]
 use std::sync::atomic::Ordering::Relaxed;
-use ndsd_read::DSDMeta;
 #[cfg(target_os = "linux")]
 use tokio::sync::Mutex;
 #[cfg(target_os = "linux")]
@@ -43,8 +44,26 @@ pub enum ControlRequest {
     Play,
     Terminate,
 }
-#[cfg(target_os = "linux")]
 
+pub struct SharedState {
+    current_pos: AtomicF64,
+    is_playing: AtomicBool,
+    current_meta: RwLock<Option<DSDMeta>>,
+    current_format: RwLock<Option<DSDFormat>>,
+}
+
+impl Default for SharedState {
+    fn default() -> Self {
+        Self {
+            current_pos: AtomicF64::new(0f64),
+            is_playing: AtomicBool::new(false),
+            current_meta: RwLock::new(None),
+            current_format: RwLock::new(None),
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
 struct PlayerState {
     reader: Option<Box<dyn DSDReader>>,
     format: DSDFormat,
@@ -62,10 +81,7 @@ pub struct AlsaPlayer {
     device_name: CString,
     player_thread: std::thread::JoinHandle<()>,
     message_channel: Sender<ControlRequest>,
-    current_pos: Arc<AtomicF64>,
-    is_playing: Arc<AtomicBool>,
-    cur_format: Arc<Mutex<DSDFormat>>,
-    cur_meta: Arc<Mutex<Option<DSDMeta>>>,
+    shared_state: Arc<SharedState>,
 }
 #[cfg(target_os = "linux")]
 #[async_trait::async_trait]
@@ -86,7 +102,7 @@ impl DSDPlayer for AlsaPlayer {
     }
 
     async fn get_pos(&self) -> f64 {
-        self.current_pos.load(Relaxed)
+        self.shared_state.current_pos.load(Relaxed)
     }
 
     async fn stop(&self) {
@@ -94,7 +110,7 @@ impl DSDPlayer for AlsaPlayer {
     }
 
     async fn is_playing(&self) -> bool {
-        self.is_playing.load(Relaxed)
+        self.shared_state.is_playing.load(Relaxed)
     }
 
     async fn load_new_track(&mut self, filename: &str) {
@@ -116,11 +132,19 @@ impl DSDPlayer for AlsaPlayer {
     }
 
     async fn get_format_info(&self) -> DSDFormat {
-        self.cur_format.lock().await.clone()
+        self.shared_state
+            .current_format
+            .read()
+            .expect("shared state failed")
+            .unwrap_or(DSDFormat::default())
     }
 
     async fn get_current_file_meta(&self) -> Option<DSDMeta> {
-        self.cur_meta.lock().await.clone()
+        self.shared_state
+            .current_meta
+            .read()
+            .expect("shared state failed")
+            .clone()
     }
 }
 
@@ -129,35 +153,19 @@ impl AlsaPlayer {
     pub fn new(device_name: &str) -> Self {
         let device = std::ffi::CString::new(device_name).unwrap();
         let mpsc = mpsc::channel::<ControlRequest>(16);
-        let cur_pos = Arc::new(AtomicF64::new(0.));
-        let is_playing = Arc::new(AtomicBool::new(false));
-        let cur_format = Arc::new(Mutex::new(DSDFormat::default()));
-        let cur_meta = Arc::new(Mutex::new(None));
+        let s_state = Arc::new(SharedState::default());
         Self {
             device_name: device.clone(),
-            player_thread: Self::player_main(
-                device,
-                mpsc.1,
-                cur_pos.clone(),
-                is_playing.clone(),
-                cur_format.clone(),
-                cur_meta.clone(),
-            ),
+            player_thread: Self::player_main(device, mpsc.1, s_state.clone()),
             message_channel: mpsc.0,
-            current_pos: cur_pos,
-            is_playing,
-            cur_format,
-            cur_meta,
+            shared_state: s_state,
         }
     }
 
     fn player_main(
         device_name: CString,
         mut channel: Receiver<ControlRequest>,
-        pos: Arc<AtomicF64>,
-        is_playing: Arc<AtomicBool>,
-        cur_format: Arc<Mutex<DSDFormat>>,
-        cur_meta: Arc<Mutex<Option<DSDMeta>>>,
+        shared_state: Arc<SharedState>,
     ) -> std::thread::JoinHandle<()> {
         std::thread::spawn(move || {
             let mut state: PlayerState = PlayerState {
@@ -173,25 +181,24 @@ impl AlsaPlayer {
             };
             loop {
                 if !state.playing {
-                    is_playing.store(false, Relaxed);
-                    *cur_format.blocking_lock() = DSDFormat::default();
+                    shared_state.is_playing.store(false, Relaxed);
                     if let Some(cmd) = channel.blocking_recv() {
-                        if !Self::process_command(cmd, &mut state, cur_format.clone(), cur_meta.clone()) {
+                        if !Self::process_command(cmd, &mut state, shared_state.clone()) {
                             break;
                         }
                     }
                 } else {
                     if let Ok(cmd) = channel.try_recv() {
-                        if !Self::process_command(cmd, &mut state, cur_format.clone(), cur_meta.clone()) {
+                        if !Self::process_command(cmd, &mut state, shared_state.clone()) {
                             break;
                         }
                     }
                     Self::playback_poll(&mut state);
-                    pos.store(
+                    shared_state.current_pos.store(
                         state.reader.as_mut().unwrap().get_position_percent(),
                         Relaxed,
                     );
-                    is_playing.store(true, Relaxed);
+                    shared_state.is_playing.store(true, Relaxed);
                 }
             }
         })
@@ -200,20 +207,23 @@ impl AlsaPlayer {
     fn process_command(
         command: ControlRequest,
         state: &mut PlayerState,
-        cur_format: Arc<Mutex<DSDFormat>>,
-        cur_meta: Arc<Mutex<Option<DSDMeta>>>,
+        shared_state: Arc<SharedState>,
     ) -> bool {
         let mut setup_reload_required = false;
         match command {
             ControlRequest::LoadTrack(path) => {
                 let mut format = DSDFormat::default();
-                if let Ok(reader) = ndsd_read::open_dsd_auto(path.to_str().unwrap(), &mut format)
-                {
+                if let Ok(reader) = ndsd_read::open_dsd_auto(path.to_str().unwrap(), &mut format) {
                     state.reader = Some(reader);
                     setup_reload_required = format.is_different(&state.format);
                     state.format = format.clone();
-                    *cur_format.blocking_lock() = format;
-                    *cur_meta.blocking_lock() = state.reader.as_ref().unwrap().get_metadata().map(|meta| meta.clone());
+                    *shared_state.current_format.write().unwrap() = Some(format);
+                    *shared_state.current_meta.write().unwrap() = state
+                        .reader
+                        .as_ref()
+                        .unwrap()
+                        .get_metadata()
+                        .map(|x| x.clone());
                 }
             }
             ControlRequest::Start => {
@@ -313,7 +323,7 @@ impl AlsaPlayer {
                 bytes,
                 format.is_lsb_first,
                 setup.bytes_per_word,
-                setup.word_is_le
+                setup.word_is_le,
             );
             let alsa_ptr = alsa_buffer.as_ptr() as *const std::ffi::c_void;
 
@@ -330,7 +340,9 @@ impl AlsaPlayer {
                 return false;
             }
             if written == -32 {
-                unsafe { alsa::snd_pcm_prepare(setup.playback_handle); }
+                unsafe {
+                    alsa::snd_pcm_prepare(setup.playback_handle);
+                }
                 return true;
             }
             if written == -86 {
@@ -400,7 +412,10 @@ impl AlsaPlayer {
                 let name = alsa::snd_device_name_get_hint(iter, name_const.as_ptr());
                 if !name.is_null() {
                     if Self::support_dsd(name) {
-                        res.push(( CStr::from_ptr(name).to_owned(),  CStr::from_ptr(name).to_owned()));
+                        res.push((
+                            CStr::from_ptr(name).to_owned(),
+                            CStr::from_ptr(name).to_owned(),
+                        ));
                     }
                 }
                 n = n.offset(1);
@@ -450,7 +465,11 @@ impl Buffers {
                 let mut word = [0u8; 4];
                 for k in 0..bytes_per_word {
                     let byte = self.work[ch][j + k];
-                    word[k] = if lsb_first { BIT_REVERSE_TABLE[byte as usize] } else { byte };
+                    word[k] = if lsb_first {
+                        BIT_REVERSE_TABLE[byte as usize]
+                    } else {
+                        byte
+                    };
                 }
                 // Byte-swap the word for LE formats
                 if word_is_le {
@@ -619,7 +638,6 @@ impl AlsaSetup {
         handle: *mut alsa::snd_pcm_t,
         params: *mut alsa::snd_pcm_hw_params_t,
     ) -> Option<alsa::snd_pcm_format_t> {
-
         let candidates = [
             alsa::SND_PCM_FORMAT_DSD_U32_BE,
             alsa::SND_PCM_FORMAT_DSD_U32_LE,

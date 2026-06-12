@@ -21,17 +21,18 @@ mod tests{
 
         player
             .load_new_track(
-                "/mnt/hdd/Music/Enigma 2018 DSD/1996 -  III-Le Roi Est Mort, Vive Le Roi!/05 - Why! ....dsf".into()
+                "/mnt/hdd/Music/Alphaville - Forever Young (Remastered) (1984_2019) [LP] DSD128/compressed.dff".into()
             )
             .await;
         player.start().await;
 
 
-        sleep(Duration::from_millis(1500)).await;
+        sleep(Duration::from_millis(5600)).await;
 
         if let Some(meta) = player.get_current_file_meta().await{
             meta.pretty_print()
         }
+        println!("{:?}", player.get_format_info().await);
 
         player.seek(0.9f64).await.unwrap();
         sleep(Duration::from_millis(1500)).await;
@@ -48,12 +49,12 @@ mod tests{
 
         player.start().await;
 
-        sleep(Duration::from_millis(1000)).await;
+        sleep(Duration::from_millis(5000)).await;
 
         if let Some(meta) = player.get_current_file_meta().await{
             meta.pretty_print()
         }
-        player.seek(0.98f64).await.unwrap();
+        player.seek(0.99f64).await.unwrap();
         loop {
             let pos =  player.get_pos().await;
 
